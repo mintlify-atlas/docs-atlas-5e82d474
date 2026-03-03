@@ -1,0 +1,119 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Pi MCP Adapter",
+  "projectDescription": "Token-efficient MCP adapter extension for Pi coding agent with lazy loading and metadata caching",
+  "theme": "palm",
+  "primaryColor": "#6366f1",
+  "lightColor": "#818cf8",
+  "darkColor": "#4f46e5",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/lifecycle",
+              "concepts/caching",
+              "concepts/token-efficiency"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/server-setup",
+              "configuration/settings",
+              "configuration/authentication",
+              "configuration/imports"
+            ]
+          },
+          {
+            "group": "Usage",
+            "pages": [
+              "usage/tool-proxy",
+              "usage/direct-tools",
+              "usage/commands",
+              "usage/search"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/project-config",
+              "advanced/environment-variables",
+              "advanced/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Tool API",
+            "pages": [
+              "api/mcp-tool",
+              "api/modes"
+            ]
+          },
+          {
+            "group": "Commands",
+            "pages": [
+              "api/mcp-command",
+              "api/mcp-auth"
+            ]
+          },
+          {
+            "group": "Configuration Schema",
+            "pages": [
+              "api/server-options",
+              "api/settings",
+              "api/types"
+            ]
+          },
+          {
+            "group": "Resources",
+            "pages": [
+              "changelog"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Token-efficient single proxy tool (~200 tokens vs 10k+)",
+    "Lazy server lifecycle with automatic idle timeout",
+    "Metadata caching for offline tool discovery",
+    "Direct tool registration for frequently-used tools",
+    "OAuth and bearer token authentication",
+    "HTTP and stdio transport with automatic fallback",
+    "Interactive management panel",
+    "Import configs from Cursor, Claude Desktop, VS Code"
+  ],
+  "publicApiSurface": [
+    "mcp({ }) - Status mode",
+    "mcp({ search: '...' }) - Search tools",
+    "mcp({ describe: '...' }) - Tool details",
+    "mcp({ tool: '...', args: '...' }) - Call tool",
+    "mcp({ connect: '...' }) - Connect server",
+    "mcp({ server: '...' }) - List server tools",
+    "/mcp - Interactive panel",
+    "/mcp reconnect - Reconnect servers",
+    "/mcp tools - List all tools",
+    "/mcp-auth <server> - OAuth setup",
+    "mcp.json config file",
+    "directTools configuration",
+    "lifecycle modes: lazy, eager, keep-alive"
+  ]
+}
