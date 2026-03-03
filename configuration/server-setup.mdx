@@ -1,0 +1,295 @@
+---
+title: "Server Setup"
+description: "Configure MCP servers in your mcp.json file with stdio and HTTP transports"
+---
+
+## Configuration File Location
+
+Pi MCP Adapter looks for server configurations in the following locations:
+
+<ParamField path="~/.pi/agent/mcp.json" type="string">
+  **Global configuration** - Default location for user-wide MCP server settings
+</ParamField>
+
+<ParamField path=".pi/mcp.json" type="string">
+  **Project configuration** - Project-specific servers that override global settings
+</ParamField>
+
+<Note>
+  Project configurations (`.pi/mcp.json`) take precedence over global configs and imported servers.
+</Note>
+
+## Basic Structure
+
+```json
+{
+  "mcpServers": {
+    "server-name": {
+      "command": "npx",
+      "args": ["-y", "some-mcp-server@latest"]
+    }
+  },
+  "settings": {},
+  "imports": []
+}
+```
+
+## Server Configuration Fields
+
+### Stdio Transport
+
+For servers that communicate via standard input/output:
+
+<ParamField path="command" type="string" required>
+  The executable command to run the MCP server
+  
+  ```json
+  {
+    "command": "npx"
+  }
+  ```
+</ParamField>
+
+<ParamField path="args" type="string[]">
+  Command-line arguments passed to the executable
+  
+  ```json
+  {
+    "args": ["-y", "chrome-devtools-mcp@latest"]
+  }
+  ```
+</ParamField>
+
+<ParamField path="env" type="object">
+  Environment variables for the server process. Supports `${VAR}` interpolation.
+  
+  ```json
+  {
+    "env": {
+      "API_KEY": "${MY_API_KEY}",
+      "DEBUG": "true"
+    }
+  }
+  ```
+</ParamField>
+
+<ParamField path="cwd" type="string">
+  Working directory for the server process
+  
+  ```json
+  {
+    "cwd": "/path/to/project"
+  }
+  ```
+</ParamField>
+
+### HTTP Transport
+
+For servers that communicate over HTTP (uses StreamableHTTP with SSE fallback):
+
+<ParamField path="url" type="string">
+  HTTP endpoint for the MCP server
+  
+  ```json
+  {
+    "url": "https://api.example.com/mcp"
+  }
+  ```
+</ParamField>
+
+<ParamField path="headers" type="object">
+  Custom HTTP headers to include in requests
+  
+  ```json
+  {
+    "headers": {
+      "X-Custom-Header": "value"
+    }
+  }
+  ```
+</ParamField>
+
+<ParamField path="auth" type="enum">
+  Authentication method for HTTP servers
+  
+  - `"bearer"` - Bearer token authentication
+  - `"oauth"` - OAuth authentication
+  
+  See [Authentication](/configuration/authentication) for details.
+</ParamField>
+
+### Lifecycle Management
+
+<ParamField path="lifecycle" type="enum" default="lazy">
+  Controls when the server connects and disconnects
+  
+  - `"lazy"` (default) - Connect on first use, disconnect after idle timeout
+  - `"eager"` - Connect at startup, no auto-reconnect on failure
+  - `"keep-alive"` - Connect at startup, auto-reconnect with health checks
+  
+  ```json
+  {
+    "lifecycle": "lazy"
+  }
+  ```
+</ParamField>
+
+<Steps>
+  <Step title="Lazy (Default)">
+    Servers don't connect at startup. They connect on the first tool call and disconnect after the idle timeout period. Metadata is cached so search/describe work without live connections.
+    
+    **Best for:** Most servers, especially those you don't use frequently
+  </Step>
+  
+  <Step title="Eager">
+    Servers connect at Pi startup but don't auto-reconnect if the connection drops. No idle timeout by default (set `idleTimeout` explicitly to enable).
+    
+    **Best for:** Servers you want ready immediately but don't need constant uptime
+  </Step>
+  
+  <Step title="Keep-alive">
+    Servers connect at startup and automatically reconnect via health checks. No idle timeout.
+    
+    **Best for:** Critical servers you always need available
+  </Step>
+</Steps>
+
+<ParamField path="idleTimeout" type="number" default="10">
+  Minutes of inactivity before disconnecting (overrides global setting). Set to `0` to disable.
+  
+  ```json
+  {
+    "idleTimeout": 15
+  }
+  ```
+</ParamField>
+
+### Resource Handling
+
+<ParamField path="exposeResources" type="boolean" default={true}>
+  Expose MCP resources as callable tools
+  
+  ```json
+  {
+    "exposeResources": true
+  }
+  ```
+</ParamField>
+
+### Direct Tool Registration
+
+<ParamField path="directTools" type="boolean | string[]" default={false}>
+  Register tools individually instead of through the proxy
+  
+  - `true` - Register all tools from this server
+  - `["tool_a", "tool_b"]` - Register only specific tools (use original MCP names)
+  - `false` - Use proxy only (default)
+  
+  See [Settings](/configuration/settings) for more details on direct tools configuration.
+  
+  ```json
+  {
+    "directTools": ["search_repositories", "get_file_contents"]
+  }
+  ```
+</ParamField>
+
+### Debugging
+
+<ParamField path="debug" type="boolean" default={false}>
+  Show server stderr output for debugging
+  
+  ```json
+  {
+    "debug": true
+  }
+  ```
+</ParamField>
+
+## Complete Examples
+
+<CodeGroup>
+
+```json Stdio Server
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"],
+      "lifecycle": "lazy",
+      "idleTimeout": 10,
+      "debug": false
+    }
+  }
+}
+```
+
+```json HTTP Server with Auth
+{
+  "mcpServers": {
+    "api-server": {
+      "url": "https://api.example.com/mcp",
+      "auth": "bearer",
+      "bearerTokenEnv": "API_TOKEN",
+      "lifecycle": "keep-alive",
+      "headers": {
+        "X-Custom-Header": "value"
+      }
+    }
+  }
+}
+```
+
+```json Multiple Servers
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "directTools": ["search_repositories", "get_file_contents"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+      "lifecycle": "lazy"
+    },
+    "database": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "env": {
+        "DATABASE_URL": "${DATABASE_URL}"
+      },
+      "lifecycle": "keep-alive"
+    }
+  },
+  "settings": {
+    "toolPrefix": "short",
+    "idleTimeout": 15
+  }
+}
+```
+
+</CodeGroup>
+
+<Warning>
+  npx-based servers are automatically optimized to run as direct binaries, bypassing the ~143 MB npm parent process.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Global Settings" icon="gear" href="/configuration/settings">
+    Configure toolPrefix, idleTimeout, and directTools defaults
+  </Card>
+  
+  <Card title="Authentication" icon="key" href="/configuration/authentication">
+    Set up OAuth and bearer token authentication
+  </Card>
+  
+  <Card title="Import Configs" icon="download" href="/configuration/imports">
+    Import existing configs from Cursor, Claude Desktop, and more
+  </Card>
+</CardGroup>

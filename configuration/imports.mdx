@@ -1,0 +1,407 @@
+---
+title: "Config Imports"
+description: "Import existing MCP configurations from Cursor, Claude Desktop, VS Code, and other tools"
+---
+
+## Overview
+
+If you already have MCP servers configured in other tools, Pi MCP Adapter can import those configurations automatically. This saves you from duplicating server definitions across multiple config files.
+
+## Supported Import Sources
+
+The adapter supports importing from these tools:
+
+<ParamField path="cursor" type="ImportKind">
+  **Cursor IDE**
+  
+  Config location: `~/.cursor/mcp.json`
+</ParamField>
+
+<ParamField path="claude-code" type="ImportKind">
+  **Claude Code**
+  
+  Config location: `~/.claude/claude_desktop_config.json`
+</ParamField>
+
+<ParamField path="claude-desktop" type="ImportKind">
+  **Claude Desktop**
+  
+  Config location: `~/Library/Application Support/Claude/claude_desktop_config.json`
+</ParamField>
+
+<ParamField path="vscode" type="ImportKind">
+  **VS Code**
+  
+  Config location: `.vscode/mcp.json` (relative to project)
+</ParamField>
+
+<ParamField path="windsurf" type="ImportKind">
+  **Windsurf**
+  
+  Config location: `~/.windsurf/mcp.json`
+</ParamField>
+
+<ParamField path="codex" type="ImportKind">
+  **Codex**
+  
+  Config location: `~/.codex/config.json`
+</ParamField>
+
+## Basic Usage
+
+Add an `imports` array to your `mcp.json`:
+
+```json
+{
+  "imports": ["cursor", "claude-desktop"],
+  "mcpServers": {}
+}
+```
+
+The adapter will:
+
+1. Load your Pi config (`~/.pi/agent/mcp.json`)
+2. Import servers from specified sources
+3. Merge them together (local config takes precedence)
+4. Apply any project-specific overrides from `.pi/mcp.json`
+
+## Merge Behavior
+
+Configurations are merged with this precedence order (highest to lowest):
+
+<Steps>
+  <Step title="Project Config (Highest Priority)">
+    Servers defined in `.pi/mcp.json` in your project directory
+  </Step>
+  
+  <Step title="User Config">
+    Servers defined in `~/.pi/agent/mcp.json`
+  </Step>
+  
+  <Step title="Imported Configs (Lowest Priority)">
+    Servers imported from other tools (processed in order of the `imports` array)
+  </Step>
+</Steps>
+
+<Note>
+  If the same server name exists in multiple locations, the higher-precedence config wins. This means you can override imported server settings in your local config.
+</Note>
+
+## Examples
+
+### Import from Multiple Sources
+
+```json
+{
+  "imports": [
+    "cursor",
+    "claude-desktop",
+    "vscode"
+  ],
+  "mcpServers": {
+    "my-custom-server": {
+      "command": "npx",
+      "args": ["-y", "my-mcp-server"]
+    }
+  }
+}
+```
+
+**Result:** All servers from Cursor, Claude Desktop, and VS Code are available, plus `my-custom-server`.
+
+### Override Imported Server
+
+**Cursor's config** (`~/.cursor/mcp.json`):
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"]
+    }
+  }
+}
+```
+
+**Your Pi config** (`~/.pi/agent/mcp.json`):
+```json
+{
+  "imports": ["cursor"],
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "directTools": ["search_repositories", "get_file_contents"],
+      "lifecycle": "lazy"
+    }
+  }
+}
+```
+
+**Result:** The `github` server uses your Pi config settings (with `directTools` and `lifecycle`), not Cursor's.
+
+### Project-Specific Overrides
+
+**Global config** (`~/.pi/agent/mcp.json`):
+```json
+{
+  "imports": ["claude-desktop"],
+  "settings": {
+    "toolPrefix": "server",
+    "idleTimeout": 10
+  }
+}
+```
+
+**Project config** (`.pi/mcp.json` in your project):
+```json
+{
+  "settings": {
+    "toolPrefix": "short",
+    "idleTimeout": 5
+  },
+  "mcpServers": {
+    "project-db": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "env": {
+        "DATABASE_URL": "${PROJECT_DB_URL}"
+      },
+      "lifecycle": "keep-alive"
+    }
+  }
+}
+```
+
+**Result:**
+- All Claude Desktop servers are available
+- Settings use project values: `toolPrefix: "short"`, `idleTimeout: 5`
+- Additional `project-db` server is available only in this project
+
+## Import Path Resolution
+
+### Absolute Paths
+
+Most imports use absolute paths from the home directory:
+
+```typescript
+"cursor": "~/.cursor/mcp.json"
+"claude-desktop": "~/Library/Application Support/Claude/claude_desktop_config.json"
+"windsurf": "~/.windsurf/mcp.json"
+```
+
+### Relative Paths
+
+VS Code uses a project-relative path:
+
+```typescript
+"vscode": ".vscode/mcp.json"
+```
+
+This is resolved relative to the current working directory (`process.cwd()`).
+
+## Config Format Differences
+
+Different tools use different config formats. The adapter handles these automatically:
+
+### Standard Format (Cursor, Windsurf, VS Code)
+
+```json
+{
+  "mcpServers": {
+    "server-name": { ... }
+  }
+}
+```
+
+or
+
+```json
+{
+  "mcp-servers": {
+    "server-name": { ... }
+  }
+}
+```
+
+### Claude Desktop Format
+
+```json
+{
+  "mcpServers": {
+    "server-name": { ... }
+  }
+}
+```
+
+### Codex Format
+
+```json
+{
+  "mcpServers": {
+    "server-name": { ... }
+  }
+}
+```
+
+<Note>
+  The adapter automatically detects and extracts the `mcpServers` object regardless of format variations.
+</Note>
+
+## Error Handling
+
+The adapter gracefully handles import errors:
+
+- **File not found:** Silently skipped (no error)
+- **Invalid JSON:** Warning logged, import skipped
+- **Invalid format:** Warning logged, import skipped
+
+```bash
+Failed to import MCP config from cursor: SyntaxError: Unexpected token
+```
+
+Other imports continue processing normally.
+
+## Import Provenance Tracking
+
+The adapter tracks where each server came from. This is visible in the `/mcp` interactive panel:
+
+```
+✓ github (imported from cursor)
+✓ filesystem (user config)
+✓ project-db (project config)
+```
+
+Provenance affects how config changes are saved:
+
+- **User config servers:** Changes written to `~/.pi/agent/mcp.json`
+- **Imported servers:** Changes written to the original import location
+- **Project config servers:** Changes written to `.pi/mcp.json`
+
+<Warning>
+  When you modify an imported server's `directTools` setting via `/mcp`, the change is written back to the original config file (e.g., `~/.cursor/mcp.json`). This may affect other tools using that config.
+</Warning>
+
+## Performance
+
+Imports are processed synchronously at startup but are very fast:
+
+- **File reads:** ~1-5ms per import
+- **JSON parsing:** ~1-2ms per import
+- **Merge logic:** ~1ms
+
+**Total overhead:** Typically under 20ms even with multiple imports.
+
+## Complete Example
+
+```json
+{
+  "imports": [
+    "cursor",
+    "claude-desktop",
+    "vscode"
+  ],
+  "settings": {
+    "toolPrefix": "short",
+    "idleTimeout": 15,
+    "directTools": false
+  },
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "directTools": ["search_repositories", "get_file_contents"],
+      "lifecycle": "lazy"
+    },
+    "pi-only-server": {
+      "command": "npx",
+      "args": ["-y", "custom-mcp-server"],
+      "lifecycle": "keep-alive"
+    }
+  }
+}
+```
+
+**Result:**
+- All servers from Cursor, Claude Desktop, and VS Code
+- `github` server uses Pi-specific settings (overrides any imported `github`)
+- `pi-only-server` is only available in Pi
+- Global settings apply to all servers
+
+## Best Practices
+
+<Steps>
+  <Step title="Import First">
+    List all imports before defining local servers for clarity
+  </Step>
+  
+  <Step title="Override Selectively">
+    Only redefine imported servers if you need to change their settings
+  </Step>
+  
+  <Step title="Use Project Configs">
+    Put project-specific servers in `.pi/mcp.json` instead of global config
+  </Step>
+  
+  <Step title="Document Provenance">
+    Use comments (in JSON5 or JSONC) to note which servers are overrides
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Imported Servers Not Showing Up
+
+1. **Check file exists:**
+   ```bash
+   ls ~/.cursor/mcp.json
+   ls "~/Library/Application Support/Claude/claude_desktop_config.json"
+   ```
+
+2. **Validate JSON:**
+   ```bash
+   cat ~/.cursor/mcp.json | jq .
+   ```
+
+3. **Check import spelling:**
+   ```json
+   {
+     "imports": ["cursor"]  // Not "cursir" or "Cursor"
+   }
+   ```
+
+### Unexpected Server Behavior
+
+If an imported server behaves differently than expected:
+
+1. **Check local override:**
+   Look for the server name in your `~/.pi/agent/mcp.json`
+
+2. **Check project override:**
+   Look in `.pi/mcp.json` in your project directory
+
+3. **Check provenance:**
+   Run `/mcp` to see where each server is defined
+
+### Changes Not Persisting
+
+If you modify imported servers via `/mcp` and changes disappear:
+
+- Changes to imported servers are written to the **original config file**, not Pi's config
+- If the other tool overwrites its config, your changes may be lost
+- Solution: Define the server in your Pi config to take ownership
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Server Setup" icon="server" href="/configuration/server-setup">
+    Configure MCP servers from scratch
+  </Card>
+  
+  <Card title="Global Settings" icon="gear" href="/configuration/settings">
+    Set defaults for toolPrefix, idleTimeout, and directTools
+  </Card>
+</CardGroup>

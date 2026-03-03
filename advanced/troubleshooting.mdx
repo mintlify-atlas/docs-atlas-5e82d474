@@ -1,0 +1,710 @@
+---
+title: "Troubleshooting"
+description: "Common issues and solutions for Pi MCP Adapter"
+---
+
+## Server Connection Issues
+
+### Server Fails to Connect
+
+**Symptom**: Error message like `Failed to connect to "server-name": <error>`
+
+**Common Causes**:
+
+1. **Server not installed**
+   
+   For `npx` servers, the first connection downloads the package. This can fail due to network issues or rate limits.
+   
+   <CodeGroup>
+   ```bash Check npm registry
+   npm view @modelcontextprotocol/server-github
+   ```
+   
+   ```bash Pre-install
+   npm install -g @modelcontextprotocol/server-github
+   ```
+   </CodeGroup>
+   
+   Then update config to use the global install:
+   ```json
+   {
+     "command": "@modelcontextprotocol/server-github",
+     "args": []
+   }
+   ```
+
+2. **Invalid command path**
+   
+   Check that the command exists:
+   ```bash
+   which node
+   which npx
+   ```
+   
+   Use absolute paths if needed:
+   ```json
+   {
+     "command": "/usr/local/bin/node",
+     "args": ["server.js"]
+   }
+   ```
+
+3. **Missing environment variables**
+   
+   Enable debug mode to see stderr:
+   ```json
+   {
+     "mcpServers": {
+       "my-server": {
+         "debug": true
+       }
+     }
+   }
+   ```
+   
+   Look for error messages about missing credentials or config.
+
+4. **Server process crashes immediately**
+   
+   Test the server directly:
+   ```bash
+   npx -y @modelcontextprotocol/server-github
+   ```
+   
+   It should start and wait for input. If it crashes, the issue is with the server itself, not the adapter.
+
+### Server Shows "Failed Xs Ago"
+
+**Symptom**: `/mcp` shows "failed 120s ago" instead of connected/cached.
+
+**Cause**: The adapter tracks connection failures and applies a 60-second backoff to avoid spamming reconnections.
+
+From `index.ts:34`, failed servers are tracked with timestamps. The adapter won't retry lazy connections for 60 seconds after a failure.
+
+**Solution**:
+
+1. Fix the underlying issue (see above)
+2. Force reconnect:
+   ```bash
+   /mcp reconnect server-name
+   ```
+3. Restart Pi
+
+<Tip>
+The backoff only applies to **lazy** connections (automatic retry on tool call). You can always force reconnect with `/mcp reconnect`.
+</Tip>
+
+### HTTP Server Connection Issues
+
+**Symptom**: HTTP/SSE transport fails with auth errors.
+
+**Common Causes**:
+
+1. **Missing bearer token**
+   
+   ```json
+   {
+     "url": "https://api.example.com/mcp",
+     "auth": "bearer",
+     "bearerTokenEnv": "API_TOKEN"  // Make sure this is set!
+   }
+   ```
+   
+   ```bash
+   export API_TOKEN="your-token"
+   pi
+   ```
+
+2. **OAuth not completed**
+   
+   Run the auth flow:
+   ```bash
+   /mcp-auth server-name
+   ```
+   
+   Follow the instructions to complete OAuth.
+
+3. **Wrong transport**
+   
+   The adapter tries StreamableHTTP first, then falls back to SSE. If the server only supports one:
+   
+   - Check server documentation for required transport
+   - Some servers need specific headers (set in `headers` field)
+
+## Tool Discovery Issues
+
+### Tools Not Showing in Search
+
+**Symptom**: `mcp({ search: "..." })` returns no results for tools you expect.
+
+**Causes**:
+
+1. **Metadata not cached**
+   
+   Check if the server is cached:
+   ```bash
+   cat ~/.pi/agent/mcp-cache.json | jq '.servers["server-name"]'
+   ```
+   
+   If missing, connect to populate cache:
+   ```bash
+   /mcp reconnect server-name
+   ```
+
+2. **Server has no tools**
+   
+   List the server:
+   ```
+   mcp({ server: "server-name" })
+   ```
+   
+   If it shows 0 tools, the server isn't exposing any. Check server configuration.
+
+3. **Search query doesn't match**
+   
+   From `index.ts:734-761`, search splits on whitespace and ORs the terms with regex. Try:
+   
+   - Single keywords: `mcp({ search: "screenshot" })`
+   - Multiple terms: `mcp({ search: "list table" })` (matches "list_tables")
+   - Regex mode: `mcp({ search: "^get_", regex: true })`
+
+### Tool Not Found When Calling
+
+**Symptom**: `mcp({ tool: "tool_name" })` returns "Tool 'tool_name' not found".
+
+**Causes**:
+
+1. **Wrong tool name**
+   
+   Tool names are **prefixed** by default. If `toolPrefix: "server"`, the tool is:
+   ```
+   server_name_original_tool_name
+   ```
+   
+   Use search to find the exact name:
+   ```
+   mcp({ search: "original_tool" })
+   ```
+
+2. **Server not connected/cached**
+   
+   The adapter lazy-connects on tool calls, but if the server previously failed, it won't retry for 60s.
+   
+   Force reconnect:
+   ```bash
+   /mcp reconnect server-name
+   ```
+
+3. **Hyphen/underscore mismatch**
+   
+   From `index.ts:42-48`, the adapter normalizes hyphens and underscores. These should work:
+   
+   - `mcp({ tool: "resolve-library-id" })`
+   - `mcp({ tool: "resolve_library_id" })`
+   
+   But if neither works, check the exact name with:
+   ```
+   mcp({ describe: "resolve_library_id" })
+   ```
+
+## Direct Tools Issues
+
+### Direct Tools Not Registering
+
+**Symptom**: Set `directTools: true` but tools don't appear in Pi's tool list.
+
+**Causes**:
+
+1. **Cache doesn't exist**
+   
+   Direct tools register from the **metadata cache** at startup. If the cache is empty, tools won't register.
+   
+   From `index.ts:1261-1298`, the adapter bootstraps missing caches in the background on first run.
+   
+   **Solution**: Connect to the server and restart Pi:
+   ```bash
+   /mcp reconnect server-name
+   # Restart Pi
+   ```
+
+2. **Cache is stale**
+   
+   From `metadata-cache.ts`, the cache includes a hash of server config. If you changed the config, the cache is invalidated.
+   
+   **Solution**: Reconnect to refresh cache:
+   ```bash
+   /mcp reconnect server-name
+   # Restart Pi
+   ```
+
+3. **Tool name collision**
+   
+   From `index.ts:138-146`, builtin names are protected:
+   
+   - `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`, `mcp`
+   
+   If a tool has the same prefixed name as a builtin, it's skipped with a warning:
+   ```
+   MCP: skipping direct tool "bash" (collides with builtin)
+   ```
+   
+   **Solution**: Use `toolPrefix: "server"` to namespace tools, or list specific tools:
+   ```json
+   {
+     "directTools": ["tool1", "tool2"]  // Exclude colliding tools
+   }
+   ```
+
+4. **Duplicate tool names**
+   
+   If two servers expose tools with the same prefixed name:
+   ```
+   MCP: skipping duplicate direct tool "server_query" from "postgres2"
+   ```
+   
+   **Solution**: Use `toolPrefix: "server"` (full server name prefix) or explicitly list tools.
+
+### MCP_DIRECT_TOOLS Not Working
+
+See [Environment Variables](/advanced/environment-variables) for details on MCP_DIRECT_TOOLS.
+
+## Resource Issues
+
+### Resources Not Appearing as Tools
+
+**Symptom**: MCP resources don't show up in tool list.
+
+**Causes**:
+
+1. **`exposeResources: false`**
+   
+   Check server config:
+   ```json
+   {
+     "mcpServers": {
+       "my-server": {
+         "exposeResources": false  // ❌ Resources disabled
+       }
+     }
+   }
+   ```
+   
+   **Default is `true`**. Only set to `false` if you want to disable resource tools.
+
+2. **Server has no resources**
+   
+   Not all MCP servers expose resources. Check server documentation.
+
+3. **Resource naming**
+   
+   From `resource-tools.ts`, resources are exposed as tools with names like:
+   ```
+   get_<resource_name>
+   ```
+   
+   The resource name is sanitized (special chars replaced with underscores). Search for `get_` to find them:
+   ```
+   mcp({ search: "get_", regex: true })
+   ```
+
+## Performance Issues
+
+### Slow Startup
+
+**Symptom**: Pi takes 10+ seconds to start.
+
+**Causes**:
+
+1. **Too many eager/keep-alive servers**
+   
+   From `index.ts:1206-1226`, the adapter connects to all `eager` and `keep-alive` servers at startup in parallel (max 10 concurrent).
+   
+   **Solution**: Use `lazy` lifecycle for most servers:
+   ```json
+   {
+     "mcpServers": {
+       "rarely-used": {
+         "lifecycle": "lazy"  // Don't connect at startup
+       }
+     }
+   }
+   ```
+
+2. **npx overhead**
+   
+   From the README, npx-based servers have ~143 MB parent process overhead, but the adapter resolves them to direct binary paths.
+   
+   If still slow, pre-install globally:
+   ```bash
+   npm install -g @modelcontextprotocol/server-github
+   ```
+   
+   Update config:
+   ```json
+   {
+     "command": "@modelcontextprotocol/server-github"
+   }
+   ```
+
+3. **Cache doesn't exist**
+   
+   First run populates the cache, which requires connecting to all servers. Subsequent runs are faster.
+
+### High Memory Usage
+
+**Symptom**: Pi process uses 500+ MB RAM.
+
+**Causes**:
+
+1. **Too many keep-alive servers**
+   
+   Each connected server is a separate process. If you have 10 servers with `lifecycle: "keep-alive"`, you have 10+ processes running.
+   
+   **Solution**: Use lazy lifecycle and rely on the cache:
+   ```json
+   {
+     "lifecycle": "lazy",
+     "idleTimeout": 5  // Disconnect after 5 minutes
+   }
+   ```
+
+2. **Large MCP responses**
+   
+   If a tool returns megabytes of data (e.g., database dump), it's kept in memory.
+   
+   **Solution**: Ask the LLM to paginate or filter results.
+
+### Slow Tool Calls
+
+**Symptom**: Tool calls take 5+ seconds.
+
+**Causes**:
+
+1. **Server startup delay**
+   
+   Lazy servers connect on first tool call. Subsequent calls are fast.
+   
+   **Solution**: Use `lifecycle: "eager"` for frequently-used servers.
+
+2. **npx resolution**
+   
+   The adapter resolves npx packages on first connection. This can take 1-2 seconds.
+   
+   **Solution**: Pre-install or use global packages.
+
+3. **Network latency (HTTP servers)**
+   
+   HTTP/SSE transport adds round-trip latency.
+   
+   **Solution**: Use stdio transport if possible, or keep the connection alive:
+   ```json
+   {
+     "lifecycle": "keep-alive"
+   }
+   ```
+
+## Configuration Issues
+
+### Config Not Loading
+
+**Symptom**: Changes to `mcp.json` don't apply.
+
+**Causes**:
+
+1. **Wrong file path**
+   
+   Default is `~/.pi/agent/mcp.json`. Check:
+   ```bash
+   ls -la ~/.pi/agent/mcp.json
+   ```
+   
+   You can override with `--mcp-config`:
+   ```bash
+   pi --mcp-config /path/to/mcp.json
+   ```
+
+2. **Invalid JSON**
+   
+   Test syntax:
+   ```bash
+   cat ~/.pi/agent/mcp.json | jq
+   ```
+   
+   If it errors, fix the JSON.
+
+3. **Didn't restart Pi**
+   
+   Config is loaded at startup. Restart Pi after changes.
+
+4. **Config warnings in console**
+   
+   From `config.ts:30-32`, parse errors are logged:
+   ```
+   Failed to load MCP config from <path>: <error>
+   ```
+   
+   Check Pi's stderr for warnings.
+
+### Settings Not Applying
+
+**Symptom**: `toolPrefix` or `idleTimeout` doesn't work.
+
+**Solution**: Settings go in the `settings` object, not at root level:
+
+<CodeGroup>
+```json ❌ Wrong
+{
+  "toolPrefix": "short",
+  "mcpServers": { }
+}
+```
+
+```json ✅ Correct
+{
+  "settings": {
+    "toolPrefix": "short"
+  },
+  "mcpServers": { }
+}
+```
+</CodeGroup>
+
+### Import Not Working
+
+**Symptom**: `imports` array doesn't load other configs.
+
+**Causes**:
+
+1. **Config file doesn't exist**
+   
+   From `config.ts:11-18`, import paths are:
+   
+   | Import Kind | Path |
+   |-------------|------|
+   | `cursor` | `~/.cursor/mcp.json` |
+   | `claude-code` | `~/.claude/claude_desktop_config.json` |
+   | `claude-desktop` | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+   | `vscode` | `.vscode/mcp.json` (project-relative) |
+   | `windsurf` | `~/.windsurf/mcp.json` |
+   | `codex` | `~/.codex/config.json` |
+   
+   Check if the file exists:
+   ```bash
+   ls -la ~/.cursor/mcp.json
+   ```
+
+2. **Invalid JSON in imported file**
+   
+   From `config.ts:47-59`, import errors are logged but don't fail the entire config load:
+   ```
+   Failed to import MCP config from cursor: <error>
+   ```
+   
+   Check Pi's stderr for warnings.
+
+3. **Wrong format**
+   
+   Imported configs must have `mcpServers` key. Claude Desktop uses `mcpServers`, Cursor uses `mcp-servers` or `mcpServers`. Both are supported.
+
+## Cache Issues
+
+### Cache Not Updating
+
+**Symptom**: Tool list doesn't reflect server changes.
+
+**Cause**: The cache (`~/.pi/agent/mcp-cache.json`) is validated against a hash of the server config. If the hash matches, the cache is used even if the server changed.
+
+From `metadata-cache.ts`, the hash includes:
+- `command`, `args`, `url`
+- `env` (keys only, not values)
+- `exposeResources`
+
+Changing these invalidates the cache. But changing `lifecycle`, `idleTimeout`, or `debug` does **not**.
+
+**Solution**: Force refresh:
+```bash
+/mcp reconnect server-name
+```
+
+Or delete the cache:
+```bash
+rm ~/.pi/agent/mcp-cache.json
+# Restart Pi
+```
+
+### Cache Corruption
+
+**Symptom**: Adapter errors on startup with cache-related messages.
+
+**Solution**: Delete and rebuild:
+```bash
+rm ~/.pi/agent/mcp-cache.json
+pi
+# Cache rebuilds automatically
+```
+
+The cache is just an optimization. Deleting it is safe.
+
+## OAuth Issues
+
+### OAuth Flow Not Starting
+
+**Symptom**: `/mcp-auth server-name` shows error or does nothing.
+
+**Cause**: OAuth implementation is minimal. From the README:
+> OAuth tokens obtained externally (no browser flow)
+
+The adapter doesn't have a built-in browser flow. You need to:
+
+1. Obtain the token manually (via server docs)
+2. Store it with `/mcp-auth`
+
+Some servers have helper commands. Check server documentation.
+
+### Token Expired
+
+**Symptom**: HTTP server returns 401 Unauthorized.
+
+**Cause**: OAuth tokens expire. From the README:
+> No automatic token refresh
+
+**Solution**: Re-authenticate:
+```bash
+/mcp-auth server-name
+```
+
+## Idle Timeout Issues
+
+### Server Disconnects Too Quickly
+
+**Symptom**: Server shows "idle" between tool calls.
+
+**Cause**: Default idle timeout is 10 minutes.
+
+From `lifecycle.ts`, the adapter tracks last activity and disconnects idle servers.
+
+**Solution**: Increase timeout or disable:
+
+<CodeGroup>
+```json Per-Server
+{
+  "mcpServers": {
+    "my-server": {
+      "idleTimeout": 0  // Never disconnect
+    }
+  }
+}
+```
+
+```json Global
+{
+  "settings": {
+    "idleTimeout": 30  // 30 minutes
+  }
+}
+```
+</CodeGroup>
+
+Or use keep-alive:
+```json
+{
+  "lifecycle": "keep-alive"  // Never idle-disconnect
+}
+```
+
+### Server Won't Disconnect
+
+**Symptom**: Server stays connected even when unused.
+
+**Cause**: `idleTimeout: 0` or `lifecycle: "keep-alive"`.
+
+**Solution**: Set a timeout:
+```json
+{
+  "lifecycle": "lazy",
+  "idleTimeout": 10
+}
+```
+
+## Debugging Tips
+
+### Enable Server Debug Output
+
+Add `debug: true` to see server stderr:
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "node",
+      "args": ["server.js"],
+      "debug": true
+    }
+  }
+}
+```
+
+Restart Pi and watch for error messages.
+
+### Check Logs
+
+Pi logs to stderr. Run with output visible:
+
+```bash
+pi 2>&1 | tee pi.log
+```
+
+Search for "MCP" in the log:
+
+```bash
+grep -i mcp pi.log
+```
+
+### Inspect Cache
+
+The cache is human-readable JSON:
+
+```bash
+cat ~/.pi/agent/mcp-cache.json | jq
+```
+
+Check:
+- Which servers are cached
+- Tool counts
+- Resource counts
+
+### Test Server Directly
+
+Run the server outside Pi to isolate issues:
+
+```bash
+node server.js
+# Or
+npx -y @modelcontextprotocol/server-github
+```
+
+The server should start and wait for input. If it crashes, the problem is with the server, not the adapter.
+
+### Interactive Panel
+
+Use `/mcp` to open the interactive panel. It shows:
+
+- Server status (connected/idle/failed)
+- Tool counts
+- Direct vs proxy tools
+- Reconnect buttons
+
+This is the fastest way to diagnose connection issues.
+
+## Getting Help
+
+If you're stuck:
+
+1. **Check server documentation** — many issues are server-specific
+2. **Enable `debug: true`** to see server stderr
+3. **Test the server directly** to rule out adapter issues
+4. **File an issue** at https://github.com/badlogic/pi-mcp-adapter with:
+   - Pi version (`pi --version`)
+   - Server config (sanitize secrets)
+   - Error messages from logs
+   - Output of `/mcp` command

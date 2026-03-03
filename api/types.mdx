@@ -1,0 +1,357 @@
+---
+title: "Type Reference"
+description: "Key TypeScript interfaces and types from the Pi MCP Adapter codebase"
+---
+
+## Overview
+
+This page documents the core TypeScript types used throughout the Pi MCP Adapter. These types are defined in `types.ts` and used across the extension.
+
+## Configuration Types
+
+### McpConfig
+
+Root configuration object for `mcp.json`.
+
+```typescript
+interface McpConfig {
+  mcpServers: Record<string, ServerEntry>;
+  imports?: ImportKind[];
+  settings?: McpSettings;
+}
+```
+
+<ResponseField name="mcpServers" type="Record<string, ServerEntry>" required>
+  Map of server names to their configurations. Each key is a server name, each value is a `ServerEntry`.
+</ResponseField>
+
+<ResponseField name="imports" type="ImportKind[]">
+  List of external configurations to import. See [ImportKind](#importkind).
+</ResponseField>
+
+<ResponseField name="settings" type="McpSettings">
+  Global settings. See [McpSettings](#mcpsettings).
+</ResponseField>
+
+### ServerEntry
+
+Configuration for a single MCP server.
+
+```typescript
+interface ServerEntry {
+  // Stdio transport
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  
+  // HTTP transport
+  url?: string;
+  headers?: Record<string, string>;
+  auth?: "oauth" | "bearer";
+  bearerToken?: string;
+  bearerTokenEnv?: string;
+  
+  // Lifecycle
+  lifecycle?: "keep-alive" | "lazy" | "eager";
+  idleTimeout?: number;
+  
+  // Features
+  exposeResources?: boolean;
+  directTools?: boolean | string[];
+  debug?: boolean;
+}
+```
+
+See [Server Options](/api/server-options) for detailed field documentation.
+
+### McpSettings
+
+Global settings for all MCP servers.
+
+```typescript
+interface McpSettings {
+  toolPrefix?: "server" | "none" | "short";
+  idleTimeout?: number;
+  directTools?: boolean;
+}
+```
+
+See [Settings](/api/settings) for detailed field documentation.
+
+### ImportKind
+
+Supported external configuration sources.
+
+```typescript
+type ImportKind = 
+  | "cursor" 
+  | "claude-code" 
+  | "claude-desktop" 
+  | "codex" 
+  | "windsurf" 
+  | "vscode";
+```
+
+## MCP Protocol Types
+
+### McpTool
+
+Tool definition from an MCP server.
+
+```typescript
+interface McpTool {
+  name: string;
+  title?: string;
+  description?: string;
+  inputSchema?: unknown;  // JSON Schema
+}
+```
+
+<ResponseField name="name" type="string" required>
+  The tool's identifier (e.g., `"take_screenshot"`).
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Human-readable title.
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Tool description shown to the LLM.
+</ResponseField>
+
+<ResponseField name="inputSchema" type="unknown">
+  JSON Schema object defining the tool's parameters.
+</ResponseField>
+
+### McpResource
+
+Resource definition from an MCP server.
+
+```typescript
+interface McpResource {
+  uri: string;
+  name: string;
+  description?: string;
+  mimeType?: string;
+}
+```
+
+<ResponseField name="uri" type="string" required>
+  Resource URI (e.g., `"file:///project/README.md"`).
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Resource identifier.
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Resource description.
+</ResponseField>
+
+<ResponseField name="mimeType" type="string">
+  Content MIME type (e.g., `"text/plain"`, `"application/json"`).
+</ResponseField>
+
+### McpContent
+
+Content block returned by MCP tools.
+
+```typescript
+interface McpContent {
+  type: "text" | "image" | "audio" | "resource" | "resource_link";
+  text?: string;
+  data?: string;
+  mimeType?: string;
+  resource?: {
+    uri: string;
+    text?: string;
+    blob?: string;
+  };
+  uri?: string;
+  name?: string;
+  description?: string;
+}
+```
+
+<ResponseField name="type" type="string" required>
+  Content type discriminator.
+</ResponseField>
+
+<ResponseField name="text" type="string">
+  Text content (for `type: "text"`).
+</ResponseField>
+
+<ResponseField name="data" type="string">
+  Base64-encoded data (for `type: "image"` or `type: "audio"`).
+</ResponseField>
+
+<ResponseField name="mimeType" type="string">
+  MIME type for binary content.
+</ResponseField>
+
+<ResponseField name="resource" type="object">
+  Embedded resource content (for `type: "resource"`).
+</ResponseField>
+
+<ResponseField name="uri" type="string">
+  Resource URI (for `type: "resource_link"`).
+</ResponseField>
+
+## Internal Types
+
+### ToolMetadata
+
+Internal representation of a tool with prefixed name and original name.
+
+```typescript
+interface ToolMetadata {
+  name: string;          // Prefixed name (e.g., "chrome_devtools_take_screenshot")
+  originalName: string;  // Original MCP name (e.g., "take_screenshot")
+  description: string;
+  resourceUri?: string;  // For resource tools
+  inputSchema?: unknown; // JSON Schema
+}
+```
+
+<ResponseField name="name" type="string" required>
+  Tool name with server prefix applied (based on `toolPrefix` setting).
+</ResponseField>
+
+<ResponseField name="originalName" type="string" required>
+  Original tool name from the MCP server (before prefixing).
+</ResponseField>
+
+<ResponseField name="description" type="string" required>
+  Tool description.
+</ResponseField>
+
+<ResponseField name="resourceUri" type="string">
+  If present, this tool reads from an MCP resource instead of calling a tool. The `resourceUri` is the URI to read.
+</ResponseField>
+
+<ResponseField name="inputSchema" type="unknown">
+  JSON Schema for tool parameters. Stored for `describe` mode and error messages.
+</ResponseField>
+
+### DirectToolSpec
+
+Specification for a directly-registered Pi tool.
+
+```typescript
+interface DirectToolSpec {
+  serverName: string;
+  originalName: string;
+  prefixedName: string;
+  description: string;
+  inputSchema?: unknown;
+  resourceUri?: string;
+}
+```
+
+<ResponseField name="serverName" type="string" required>
+  The server this tool belongs to.
+</ResponseField>
+
+<ResponseField name="originalName" type="string" required>
+  Original MCP tool name.
+</ResponseField>
+
+<ResponseField name="prefixedName" type="string" required>
+  Prefixed name used for Pi tool registration.
+</ResponseField>
+
+<ResponseField name="description" type="string" required>
+  Tool description.
+</ResponseField>
+
+<ResponseField name="inputSchema" type="unknown">
+  JSON Schema for parameters.
+</ResponseField>
+
+<ResponseField name="resourceUri" type="string">
+  If present, this is a resource tool.
+</ResponseField>
+
+### Transport
+
+Union of supported MCP transport types.
+
+```typescript
+type Transport = 
+  | StdioClientTransport 
+  | SSEClientTransport 
+  | StreamableHTTPClientTransport;
+```
+
+Transports are from `@modelcontextprotocol/sdk`:
+
+- **StdioClientTransport** - Local process communication via stdin/stdout
+- **SSEClientTransport** - HTTP server-sent events
+- **StreamableHTTPClientTransport** - HTTP streaming (preferred for HTTP servers)
+
+### ContentBlock
+
+Pi content block type (returned to the agent).
+
+```typescript
+type ContentBlock = TextContent | ImageContent;
+```
+
+From `@mariozechner/pi-ai`:
+
+- **TextContent** - `{ type: "text", text: string }`
+- **ImageContent** - `{ type: "image", data: string, mimeType: string }`
+
+## Utility Functions
+
+### getServerPrefix
+
+Computes the prefix for a server name based on the prefix mode.
+
+```typescript
+function getServerPrefix(
+  serverName: string,
+  mode: "server" | "none" | "short"
+): string
+```
+
+**Examples:**
+
+```typescript
+getServerPrefix("chrome-devtools", "server")  // → "chrome_devtools"
+getServerPrefix("chrome-devtools", "short")   // → "chrome_devtools"
+getServerPrefix("chrome-devtools-mcp", "short") // → "chrome_devtools"
+getServerPrefix("chrome-devtools", "none")    // → ""
+```
+
+### formatToolName
+
+Formats a tool name with the server prefix.
+
+```typescript
+function formatToolName(
+  toolName: string,
+  serverName: string,
+  prefix: "server" | "none" | "short"
+): string
+```
+
+**Examples:**
+
+```typescript
+formatToolName("take_screenshot", "chrome-devtools", "server")
+// → "chrome_devtools_take_screenshot"
+
+formatToolName("take_screenshot", "chrome-devtools", "none")
+// → "take_screenshot"
+
+formatToolName("navigate", "chrome-devtools-mcp", "short")
+// → "chrome_devtools_navigate"
+```
+
+## Related
+
+- [Server Options](/api/server-options) - `ServerEntry` field documentation
+- [Settings](/api/settings) - `McpSettings` field documentation
+- [mcp() Tool](/api/mcp-tool) - Tool usage and return types

@@ -1,0 +1,395 @@
+---
+title: "Tool Search"
+description: "Discover and search for tools across MCP servers and Pi extensions"
+---
+
+The Pi MCP Adapter provides unified search across both MCP tools and Pi's built-in tools (from extensions). This makes it easy to discover capabilities without knowing which server or extension provides them.
+
+## Basic search
+
+Search for tools by name or description:
+
+```javascript
+mcp({ search: "screenshot" })
+```
+
+**Output:**
+```
+Found 2 tools matching "screenshot":
+
+chrome_devtools_screenshot
+  Take a screenshot of the page or element.
+
+  Parameters:
+    format (enum: "png", "jpeg", "webp") [default: "png"]
+    fullPage (boolean) - Full page instead of viewport
+    quality (number) - Image quality 0-100 (JPEG/WebP only)
+    selector (string) - CSS selector for specific element
+
+firefox_screenshot
+  Capture a screenshot of the current Firefox tab.
+
+  Parameters:
+    fullPage (boolean) - Capture entire page [default: false]
+```
+
+## Search behavior
+
+### OR matching (default)
+
+Space-separated words are OR'd together:
+
+```javascript
+mcp({ search: "screenshot navigate click" })
+```
+
+Matches tools containing **any** of these words:
+- Tools with "screenshot" OR
+- Tools with "navigate" OR  
+- Tools with "click"
+
+This mirrors common search engine behavior and maximizes results.
+
+### What gets searched
+
+- Tool **names** (exact and fuzzy matches)
+- Tool **descriptions**
+- Case-insensitive
+- Both MCP tools and Pi tools
+
+<Info>
+**No connection required:** Search uses cached metadata, so it works even when servers are offline.
+</Info>
+
+## Advanced search
+
+### Regex patterns
+
+Enable regex mode for complex patterns:
+
+```javascript
+mcp({ 
+  search: "^get_.*file",
+  regex: true 
+})
+```
+
+**Matches:**
+- `get_file_contents`
+- `get_file_metadata`
+- `get_directory_files`
+
+**Common patterns:**
+
+| Pattern | Matches |
+|---------|----------|
+| `^create_` | Tools starting with "create_" |
+| `_file$` | Tools ending with "_file" |
+| `read\|write` | Tools containing "read" OR "write" |
+| `chrome.*screenshot` | "chrome" followed by "screenshot" |
+
+<Warning>
+Invalid regex returns an error: `Invalid regex: <your pattern>`
+</Warning>
+
+### Filter by server
+
+Limit search to a specific server:
+
+```javascript
+mcp({ 
+  search: "search",
+  server: "github" 
+})
+```
+
+**Output:**
+```
+Found 3 tools matching "search":
+
+github_search_repositories - Search GitHub repositories
+github_search_code - Search code across GitHub
+github_search_issues - Search issues and pull requests
+```
+
+Only searches tools from the `github` server.
+
+### Compact results (no schemas)
+
+Save tokens by hiding parameter schemas:
+
+```javascript
+mcp({ 
+  search: "database",
+  includeSchemas: false 
+})
+```
+
+**Output:**
+```
+Found 5 tools matching "database":
+
+- postgres_query - Execute SQL query
+- postgres_list_tables - List all tables
+- postgres_describe_table - Show table schema
+- postgres_insert - Insert rows
+- postgres_update - Update rows
+```
+
+**Compare with full output (default):**
+```
+Found 5 tools matching "database":
+
+postgres_query
+  Execute SQL query.
+
+  Parameters:
+    query (string) *required* - SQL query to execute
+    params (array) - Query parameters
+    ...
+```
+
+<Note>
+Use compact mode when you need an overview. Use full mode (default) when you need to understand parameters.
+</Note>
+
+## Pi tools in search results
+
+Search includes Pi's built-in tools from extensions:
+
+```javascript
+mcp({ search: "bash execute" })
+```
+
+**Output:**
+```
+Found 4 tools matching "bash execute":
+
+&#91;pi tool] bash
+  Execute bash commands
+  No parameters (call directly).
+
+chrome_devtools_execute_script
+  Execute JavaScript in the browser.
+
+  Parameters:
+    script (string) *required* - JavaScript code to execute
+    ...
+
+&#91;pi tool] python
+  Execute Python scripts
+  No parameters (call directly).
+
+postgres_execute_query
+  Execute raw SQL query.
+  ...
+```
+
+**Pi tool indicators:**
+- Prefixed with `[pi tool]`
+- Listed first (before MCP tools)
+- Show "No parameters (call directly)" instead of schemas
+
+<Info>
+The `mcp` tool itself is excluded from search results to avoid confusion.
+</Info>
+
+## Use cases
+
+### Discover capabilities
+
+**Scenario:** You want to interact with a database but don't know which server provides that.
+
+```javascript
+mcp({ search: "database sql query" })
+```
+
+Finds all database-related tools across all servers.
+
+### Find tool variants
+
+**Scenario:** Multiple servers provide similar functionality (e.g., screenshot tools).
+
+```javascript
+mcp({ search: "screenshot" })
+```
+
+Compare tools from different servers:
+- `chrome_devtools_screenshot`
+- `firefox_screenshot`
+- `playwright_screenshot`
+
+### Explore server capabilities
+
+**Scenario:** You just added a new MCP server and want to see what it offers.
+
+```javascript
+mcp({ 
+  search: ".",  // Match everything
+  server: "new-server",
+  regex: true 
+})
+```
+
+Lists all tools from `new-server`.
+
+<Note>
+**Tip:** Use `mcp({ server: "name" })` instead for a cleaner tool list without search patterns.
+</Note>
+
+### Check if tool exists
+
+**Scenario:** You want to use a tool but aren't sure of its exact name.
+
+```javascript
+mcp({ search: "repository" })
+```
+
+Finds:
+- `github_search_repositories`
+- `github_create_repository`
+- `gitlab_fork_repository`
+
+Then use `describe` for details:
+```javascript
+mcp({ describe: "github_create_repository" })
+```
+
+## Tool name normalization
+
+MCP tools often use hyphens (e.g., `resolve-library-id`) but get prefixed with underscores (e.g., `context7_resolve-library-id`). Search handles this automatically:
+
+**Search for:**
+```javascript
+mcp({ search: "resolve_library" })
+```
+
+**Finds:**
+- `context7_resolve-library-id` (original uses hyphens)
+- `context7_resolve_library_id` (normalized)
+
+Both variations work because the adapter normalizes on search.
+
+## Empty results
+
+If no tools match your query:
+
+```javascript
+mcp({ search: "nonexistent" })
+```
+
+**Output:**
+```
+No tools matching "nonexistent"
+```
+
+**Tips for better results:**
+- Try broader terms ("database" instead of "postgresql")
+- Use OR terms ("read file document")
+- Check for typos
+- Try regex patterns for flexible matching
+
+## Search vs List vs Describe
+
+Choose the right mode for your needs:
+
+| Mode | When to Use | Example |
+|------|-------------|----------|
+| **Search** | Don't know which server has the tool | `mcp({ search: "screenshot" })` |
+| **List** | Know the server, want to see all its tools | `mcp({ server: "github" })` |
+| **Describe** | Know the tool name, need parameter details | `mcp({ describe: "github_create_issue" })` |
+
+**Workflow:**
+1. **Search** to discover → 2. **Describe** to understand → 3. **Call** to execute
+
+## Performance
+
+### Token efficiency
+
+Search results consume tokens based on:
+- Number of matches
+- Whether schemas are included
+- Description length
+
+**Approximate token costs:**
+
+| Result Type | Tokens per Tool |
+|-------------|----------------|
+| Compact (no schemas) | ~30-50 |
+| Full (with schemas) | ~150-300 |
+
+**Example:**
+- 10 tools, compact: ~400 tokens
+- 10 tools, full: ~2,000 tokens
+
+<Info>
+Use `includeSchemas: false` for initial exploration, then describe specific tools when needed.
+</Info>
+
+### Search is instant
+
+Search uses **cached metadata**, not live server connections:
+
+- No network calls
+- No process spawning
+- Millisecond response times
+- Works offline
+
+The cache is populated:
+- At Pi startup (for eager/keep-alive servers)
+- On first tool use (for lazy servers)
+- Via `/mcp reconnect` (manual refresh)
+
+## Integration with tool calling
+
+After finding a tool through search, call it directly:
+
+```javascript
+// 1. Search
+mcp({ search: "create repository" })
+
+// 2. Describe (optional, to see parameters)
+mcp({ describe: "github_create_repository" })
+
+// 3. Call
+mcp({ 
+  tool: "github_create_repository",
+  args: '{"name": "my-repo", "private": true}'
+})
+```
+
+Or call from search results if you know the parameters:
+
+```javascript
+// Search and call in same conversation
+mcp({ search: "screenshot" })
+mcp({ 
+  tool: "chrome_devtools_screenshot",
+  args: '{"format": "png", "fullPage": true}'
+})
+```
+
+## Search with direct tools
+
+If you've configured [direct tools](/usage/direct-tools), search still includes them:
+
+```javascript
+mcp({ search: "repository" })
+```
+
+**Output includes both:**
+- Direct tools (registered with Pi)
+- Proxy tools (accessed via `mcp()`)
+
+Direct tools can be called:
+- Directly by name: `github_search_repositories({ query: "mcp" })`
+- Via proxy: `mcp({ tool: "github_search_repositories", args: '{"query": "mcp"}' })`
+
+Search helps you find them regardless of registration mode.
+
+<Note>
+**Next steps:**
+- Learn about the [mcp() proxy tool](/usage/tool-proxy)
+- Configure [direct tools](/usage/direct-tools)
+- Use [commands](/usage/commands) to manage servers
+</Note>

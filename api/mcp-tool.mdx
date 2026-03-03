@@ -1,0 +1,251 @@
+---
+title: "mcp() Tool"
+description: "Complete reference for the unified MCP tool that provides access to all MCP servers and tools"
+---
+
+## Overview
+
+The `mcp()` tool is a unified gateway that provides access to all MCP servers and their tools through a single interface. Instead of registering hundreds of individual tools (which would consume 10,000+ tokens), the adapter exposes one proxy tool (~200 tokens) that routes requests to the appropriate MCP server.
+
+## Function Signature
+
+```typescript
+mcp(params: {
+  tool?: string;
+  args?: string;
+  connect?: string;
+  describe?: string;
+  search?: string;
+  regex?: boolean;
+  includeSchemas?: boolean;
+  server?: string;
+})
+```
+
+## Parameters
+
+<ParamField path="tool" type="string">
+  Tool name to call (e.g., `'chrome_devtools_take_screenshot'`). Triggers **call mode**.
+</ParamField>
+
+<ParamField path="args" type="string">
+  Arguments as a JSON string (e.g., `'{"key": "value"}'`). Must be a valid JSON object, not an array or primitive.
+  
+  **Important:** This is a JSON *string*, not an object. The string will be parsed and validated.
+</ParamField>
+
+<ParamField path="connect" type="string">
+  Server name to connect to. Triggers **connect mode**. Forces a connection and refreshes metadata for the specified server.
+</ParamField>
+
+<ParamField path="describe" type="string">
+  Tool name to describe. Triggers **describe mode**. Shows tool details including parameters and their schemas.
+</ParamField>
+
+<ParamField path="search" type="string">
+  Search query for finding tools. Triggers **search mode**. Space-separated words are OR'd together (like most search engines).
+  
+  Searches both MCP tools and Pi tools from installed extensions.
+</ParamField>
+
+<ParamField path="regex" type="boolean" default="false">
+  Treat the search query as a regular expression instead of space-separated terms.
+</ParamField>
+
+<ParamField path="includeSchemas" type="boolean" default="true">
+  Include parameter schemas in search results. Set to `false` for compact output.
+</ParamField>
+
+<ParamField path="server" type="string">
+  Filter results to a specific server. Works with **search mode** and **list mode**. Also disambiguates tool calls when multiple servers have the same tool name.
+</ParamField>
+
+## Operation Modes
+
+The tool's behavior is determined by which parameters you provide. Mode resolution follows this priority:
+
+**tool** > **connect** > **describe** > **search** > **server** > **status**
+
+See [Operation Modes](/api/modes) for detailed documentation of each mode.
+
+## Return Values
+
+### Success Response
+
+```typescript
+{
+  content: Array<{ type: "text" | "image"; text?: string; data?: string; mimeType?: string }>,
+  details: {
+    mode: "status" | "list" | "search" | "describe" | "call" | "connect",
+    // ... mode-specific fields
+  }
+}
+```
+
+### Error Response
+
+```typescript
+{
+  content: [{ type: "text", text: string }],
+  isError: true,
+  details: {
+    error: string,
+    // ... additional error context
+  }
+}
+```
+
+<ResponseField name="content" type="array">
+  Array of content blocks. Text content includes tool output, status information, or error messages. May include images or other media types from MCP tools.
+</ResponseField>
+
+<ResponseField name="details" type="object">
+  Structured metadata about the operation. Always includes a `mode` field. Error responses include an `error` field.
+</ResponseField>
+
+<ResponseField name="isError" type="boolean">
+  Only present on error responses. Indicates that the operation failed.
+</ResponseField>
+
+## Examples
+
+### Status Check
+
+```typescript
+mcp({})
+```
+
+```
+MCP: 2/3 servers, 47 tools
+
+✓ chrome-devtools (26 tools)
+✓ github (21 tools)
+○ postgres (not connected)
+
+mcp({ server: "name" }) to list tools, mcp({ search: "..." }) to search
+```
+
+### Search Tools
+
+```typescript
+mcp({ search: "screenshot navigate" })
+```
+
+```
+Found 2 tools matching "screenshot navigate":
+
+chrome_devtools_take_screenshot
+  Take a screenshot of the page or element.
+
+  Parameters:
+    format (enum: "png", "jpeg", "webp") [default: "png"]
+    fullPage (boolean) - Full page instead of viewport
+
+chrome_devtools_navigate
+  Navigate to a URL.
+
+  Parameters:
+    url (string) *required* - The URL to navigate to
+```
+
+### Describe Tool
+
+```typescript
+mcp({ describe: "chrome_devtools_take_screenshot" })
+```
+
+### Call Tool
+
+```typescript
+mcp({
+  tool: "chrome_devtools_take_screenshot",
+  args: '{"format": "png", "fullPage": true}'
+})
+```
+
+<Warning>
+  The `args` parameter must be a JSON **string**, not an object:
+  
+  ```typescript
+  // ✅ Correct
+  args: '{"key": "value"}'
+  
+  // ❌ Wrong
+  args: { key: "value" }
+  ```
+</Warning>
+
+### Connect to Server
+
+```typescript
+mcp({ connect: "chrome-devtools" })
+```
+
+Forces a connection and metadata refresh, then returns the tool list for that server.
+
+### Filter by Server
+
+```typescript
+mcp({ search: "file", server: "github" })
+```
+
+Searches only tools from the `github` server.
+
+## Error Handling
+
+### Common Errors
+
+<ResponseField name="init_failed" type="error">
+  MCP initialization failed. Check server logs and configuration.
+</ResponseField>
+
+<ResponseField name="not_initialized" type="error">
+  MCP not initialized. Wait for initialization to complete.
+</ResponseField>
+
+<ResponseField name="invalid_args" type="error">
+  The `args` parameter contains invalid JSON.
+</ResponseField>
+
+<ResponseField name="invalid_args_type" type="error">
+  The `args` parameter parsed successfully but is not a JSON object (it's an array, null, or primitive).
+</ResponseField>
+
+<ResponseField name="tool_not_found" type="error">
+  The requested tool was not found in any connected server. The error message includes available tools if a server was identified.
+</ResponseField>
+
+<ResponseField name="server_not_found" type="error">
+  The specified server does not exist in the configuration.
+</ResponseField>
+
+<ResponseField name="server_unavailable" type="error">
+  The server failed to connect. May include backoff information.
+</ResponseField>
+
+<ResponseField name="connect_failed" type="error">
+  Failed to establish connection to the server. Check server command, args, and environment.
+</ResponseField>
+
+<ResponseField name="tool_error" type="error">
+  The tool executed but returned an error. The error message includes the expected parameter schema to help with self-correction.
+</ResponseField>
+
+<ResponseField name="call_failed" type="error">
+  Failed to call the tool (network error, crash, etc.). Includes expected parameter schema.
+</ResponseField>
+
+## Tool Name Resolution
+
+Tools are found using the following logic:
+
+1. **Exact match** - If a tool with the exact name exists, use it
+2. **Normalized match** - Hyphens and underscores are treated as equivalent (`resolve-library-id` matches `resolve_library_id`)
+3. **Prefix match** - If no match found and `toolPrefix` is not `"none"`, extract the server prefix and try connecting to that server
+4. **Server parameter** - If `server` parameter is provided, only search that specific server
+
+## Related
+
+- [Operation Modes](/api/modes) - Detailed documentation for each mode
+- [Server Options](/api/server-options) - Configure MCP servers
+- [Settings](/api/settings) - Global MCP settings

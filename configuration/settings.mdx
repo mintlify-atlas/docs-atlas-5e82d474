@@ -1,0 +1,341 @@
+---
+title: "Global Settings"
+description: "Configure toolPrefix, idleTimeout, and directTools defaults for all MCP servers"
+---
+
+## Settings Object
+
+The `settings` field in your `mcp.json` file controls global defaults that apply to all servers unless overridden per-server.
+
+```json
+{
+  "settings": {
+    "toolPrefix": "server",
+    "idleTimeout": 10,
+    "directTools": false
+  },
+  "mcpServers": {}
+}
+```
+
+## Configuration Options
+
+### Tool Prefix
+
+<ParamField path="toolPrefix" type="enum" default="server">
+  Controls how MCP tool names are prefixed to avoid naming conflicts
+  
+  - `"server"` (default) - Full server name as prefix (e.g., `chrome_devtools_take_screenshot`)
+  - `"short"` - Strips `-mcp` suffix from server name (e.g., `chrome_take_screenshot` for `chrome-mcp` server)
+  - `"none"` - No prefix, use original tool names (risk of conflicts)
+</ParamField>
+
+<CodeGroup>
+
+```json Server Mode (Default)
+{
+  "settings": {
+    "toolPrefix": "server"
+  },
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"]
+    }
+  }
+}
+```
+
+```json Short Mode
+{
+  "settings": {
+    "toolPrefix": "short"
+  },
+  "mcpServers": {
+    "github-mcp": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"]
+    }
+  }
+}
+```
+
+```json No Prefix
+{
+  "settings": {
+    "toolPrefix": "none"
+  },
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"]
+    }
+  }
+}
+```
+
+</CodeGroup>
+
+**Tool name examples:**
+
+| Server Name | Tool Name | server | short | none |
+|-------------|-----------|--------|-------|------|
+| `chrome-devtools` | `take_screenshot` | `chrome_devtools_take_screenshot` | `chrome_devtools_take_screenshot` | `take_screenshot` |
+| `github-mcp` | `search_repos` | `github_mcp_search_repos` | `github_search_repos` | `search_repos` |
+| `postgres-mcp` | `query` | `postgres_mcp_query` | `postgres_query` | `query` |
+
+<Warning>
+  Using `"none"` can cause naming conflicts if multiple servers expose tools with the same name. Use with caution.
+</Warning>
+
+### Idle Timeout
+
+<ParamField path="idleTimeout" type="number" default={10}>
+  Global idle timeout in minutes before disconnecting inactive servers. Set to `0` to disable.
+  
+  Servers with `lifecycle: "lazy"` or `lifecycle: "eager"` (when explicitly set) will disconnect after this period of inactivity.
+  
+  Per-server `idleTimeout` overrides this global setting.
+</ParamField>
+
+```json
+{
+  "settings": {
+    "idleTimeout": 15
+  },
+  "mcpServers": {
+    "server-a": {
+      "command": "npx",
+      "args": ["-y", "server-a"]
+      // Uses global timeout: 15 minutes
+    },
+    "server-b": {
+      "command": "npx",
+      "args": ["-y", "server-b"],
+      "idleTimeout": 5
+      // Overrides global: 5 minutes
+    },
+    "server-c": {
+      "command": "npx",
+      "args": ["-y", "server-c"],
+      "lifecycle": "keep-alive"
+      // No timeout: always connected
+    }
+  }
+}
+```
+
+<Note>
+  Servers with `lifecycle: "keep-alive"` ignore idle timeout settings and remain connected.
+</Note>
+
+### Direct Tools
+
+<ParamField path="directTools" type="boolean" default={false}>
+  Global default for registering MCP tools as individual Pi tools instead of through the proxy.
+  
+  When `true`, all tools from all servers appear directly in the agent's tool list alongside built-in tools like `read`, `bash`, and `edit`.
+  
+  Per-server `directTools` overrides this global setting.
+</ParamField>
+
+## Direct Tools Deep Dive
+
+### Overview
+
+By default, the Pi MCP Adapter uses a **single proxy tool** (`mcp`) to access all MCP servers. This keeps your context window small (~200 tokens) but requires the LLM to discover tools via search.
+
+With `directTools`, you can promote specific tools to **first-class Pi tools** that appear directly in the agent's tool list.
+
+### Context Cost
+
+Each direct tool costs approximately **150-300 tokens** in the system prompt (name + description + JSON schema).
+
+| Configuration | Token Cost | Use Case |
+|---------------|------------|----------|
+| Proxy only (default) | ~200 tokens total | All servers, any number of tools |
+| 5-20 direct tools | ~750-6,000 tokens | Targeted tool sets you use frequently |
+| 75+ direct tools | ~11,250+ tokens | Not recommended - defeats the purpose |
+
+<Warning>
+  For servers with 75+ tools, stick with the proxy or use a `string[]` to pick specific tools. Otherwise you'll burn your context window.
+</Warning>
+
+### Configuration Examples
+
+<CodeGroup>
+
+```json Global Default
+{
+  "settings": {
+    "directTools": true
+  },
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"]
+      // All GitHub tools registered directly
+    },
+    "huge-server": {
+      "command": "npx",
+      "args": ["-y", "mega-mcp@latest"],
+      "directTools": false
+      // Override: proxy only
+    }
+  }
+}
+```
+
+```json Per-Server Selective
+{
+  "settings": {
+    "directTools": false
+  },
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "directTools": ["search_repositories", "get_file_contents"]
+      // Only these 2 tools
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"],
+      "directTools": true
+      // All chrome-devtools tools
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"]
+      // Proxy only (uses global default)
+    }
+  }
+}
+```
+
+</CodeGroup>
+
+### How It Works
+
+<Steps>
+  <Step title="Metadata Cache">
+    Direct tools register from the metadata cache (`~/.pi/agent/mcp-cache.json`), so **no server connections are needed at startup**.
+  </Step>
+  
+  <Step title="First Session Behavior">
+    On the first session after adding `directTools` to a new server, the cache won't exist yet. Tools fall back to proxy-only and the cache populates in the background.
+  </Step>
+  
+  <Step title="Restart Required">
+    After the cache is populated, **restart Pi** to see direct tools in the tool list.
+  </Step>
+  
+  <Step title="Force Cache Update">
+    To force immediate cache population, run:
+    ```bash
+    /mcp reconnect <server>
+    ```
+    Then restart Pi.
+  </Step>
+</Steps>
+
+### Interactive Configuration
+
+Run `/mcp` to open an interactive panel that shows:
+
+- All configured servers with connection status
+- Available tools for each server
+- Direct/proxy toggle switches
+- Reconnect and OAuth buttons
+
+<Note>
+  Changes made in the `/mcp` panel are written directly to your `mcp.json` file. Restart Pi to apply them.
+</Note>
+
+### Tool Name Format
+
+Direct tools use the same prefix rules as proxy tools (controlled by `toolPrefix` setting).
+
+**Example with `github` server and `toolPrefix: "short"`:**
+
+```json
+{
+  "settings": {
+    "toolPrefix": "short"
+  },
+  "mcpServers": {
+    "github-mcp": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "directTools": ["search_repositories"]
+    }
+  }
+}
+```
+
+Original tool: `search_repositories`  
+Registered as: `github_search_repositories`
+
+### Subagent Integration
+
+If you use the [subagent extension](https://github.com/badlogic/pi-mono/), agents can request direct MCP tools in their frontmatter:
+
+```markdown
+---
+mcp: github-mcp
+---
+
+This agent has direct access to all GitHub MCP tools.
+```
+
+See the subagent README for details.
+
+## Complete Example
+
+```json
+{
+  "settings": {
+    "toolPrefix": "short",
+    "idleTimeout": 15,
+    "directTools": false
+  },
+  "mcpServers": {
+    "github-mcp": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "directTools": ["search_repositories", "get_file_contents"],
+      "lifecycle": "lazy"
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"],
+      "directTools": true,
+      "lifecycle": "eager",
+      "idleTimeout": 5
+    },
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "env": {
+        "DATABASE_URL": "${DATABASE_URL}"
+      },
+      "lifecycle": "keep-alive"
+    }
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Server Setup" icon="server" href="/configuration/server-setup">
+    Configure individual MCP servers
+  </Card>
+  
+  <Card title="Authentication" icon="key" href="/configuration/authentication">
+    Set up OAuth and bearer token authentication
+  </Card>
+</CardGroup>

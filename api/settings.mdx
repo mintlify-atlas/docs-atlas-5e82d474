@@ -1,0 +1,304 @@
+---
+title: "Settings"
+description: "Global MCP configuration options via the McpSettings interface"
+---
+
+## Overview
+
+The `settings` field in your `mcp.json` file controls global behavior for all MCP servers. Individual server configurations can override these defaults.
+
+## Configuration Structure
+
+```json
+{
+  "settings": {
+    "toolPrefix": "server",
+    "idleTimeout": 10,
+    "directTools": false
+  },
+  "mcpServers": { }
+}
+```
+
+## Options
+
+### toolPrefix
+
+<ParamField path="toolPrefix" type="'server' | 'none' | 'short'" default="server">
+  Controls how tool names are prefixed to avoid naming conflicts between servers.
+</ParamField>
+
+#### Prefix Modes
+
+**`"server"` (default)** - Use the full server name as prefix:
+
+```json
+{
+  "mcpServers": {
+    "chrome-devtools": { }
+  }
+}
+```
+
+Tools are named: `chrome_devtools_take_screenshot`, `chrome_devtools_navigate`, etc.
+
+**`"short"` - Strip `-mcp` suffix and use shortened name:**
+
+```json
+{
+  "settings": { "toolPrefix": "short" },
+  "mcpServers": {
+    "chrome-devtools-mcp": { }
+  }
+}
+```
+
+Tools are named: `chrome_devtools_take_screenshot` (prefix: `chrome_devtools`)
+
+**`"none"` - No prefix:**
+
+```json
+{
+  "settings": { "toolPrefix": "none" },
+  "mcpServers": {
+    "chrome-devtools": { }
+  }
+}
+```
+
+Tools are named: `take_screenshot`, `navigate`, etc.
+
+<Warning>
+  Using `toolPrefix: "none"` can cause naming conflicts if multiple servers have tools with the same name. The adapter deduplicates by skipping later occurrences, but this may hide tools unexpectedly.
+</Warning>
+
+#### Prefix Normalization
+
+Hyphens in server names are converted to underscores in prefixes:
+
+- `chrome-devtools` → `chrome_devtools_`
+- `my-api-server` → `my_api_server_`
+
+This ensures tool names are valid identifiers.
+
+### idleTimeout
+
+<ParamField path="idleTimeout" type="number" default="10">
+  Minutes of inactivity before automatically disconnecting a server. Applies to `lazy` and `eager` lifecycle modes. Set to `0` to disable idle timeout globally.
+</ParamField>
+
+#### Behavior
+
+- **Lazy servers:** Connect on first use, disconnect after idle timeout
+- **Eager servers:** Connect at startup, disconnect after idle timeout (unless overridden)
+- **Keep-alive servers:** Never disconnect due to idle timeout
+
+#### Activity Tracking
+
+A server is considered "active" if:
+- A tool call is in progress
+- A tool call completed within the timeout window
+
+Servers with in-flight requests are never disconnected, even if the timeout expires.
+
+#### Per-Server Override
+
+Servers can override the global timeout:
+
+```json
+{
+  "settings": {
+    "idleTimeout": 10
+  },
+  "mcpServers": {
+    "fast-server": {
+      "idleTimeout": 2  // Disconnect after 2 minutes
+    },
+    "important-server": {
+      "idleTimeout": 0  // Never disconnect due to idle timeout
+    }
+  }
+}
+```
+
+#### Disabling Idle Timeout
+
+Set to `0` to keep servers connected indefinitely:
+
+```json
+{
+  "settings": {
+    "idleTimeout": 0
+  }
+}
+```
+
+This is equivalent to setting every server to `lifecycle: "keep-alive"`, but without automatic reconnection on failure.
+
+### directTools
+
+<ParamField path="directTools" type="boolean" default="false">
+  Global default for whether servers register their tools as individual Pi tools. Per-server `directTools` settings override this.
+</ParamField>
+
+#### Behavior
+
+- **`true`** - All servers register their tools directly by default
+- **`false`** - All servers use proxy mode by default
+
+Servers can override this setting:
+
+```json
+{
+  "settings": {
+    "directTools": true  // Default to direct registration
+  },
+  "mcpServers": {
+    "small-server": {
+      // Inherits global setting (direct tools enabled)
+    },
+    "huge-server": {
+      "directTools": false  // Override: use proxy for this server
+    },
+    "selective-server": {
+      "directTools": ["tool_a", "tool_b"]  // Override: only these tools
+    }
+  }
+}
+```
+
+#### Token Costs
+
+Each direct tool adds ~150-300 tokens to the system prompt (name + description + parameter schema). For example:
+
+- 10 direct tools ≈ 2,000 tokens
+- 50 direct tools ≈ 10,000 tokens
+- 100 direct tools ≈ 20,000 tokens
+
+Use `directTools: true` globally only if you have a small total number of tools across all servers, or if you're willing to pay the context cost for immediate tool availability.
+
+## Complete Examples
+
+### Minimal Config (all defaults)
+
+```json
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"]
+    }
+  }
+}
+```
+
+Defaults:
+- `toolPrefix: "server"`
+- `idleTimeout: 10`
+- `directTools: false`
+
+### Custom Prefix and Timeout
+
+```json
+{
+  "settings": {
+    "toolPrefix": "short",
+    "idleTimeout": 5
+  },
+  "mcpServers": {
+    "chrome-devtools-mcp": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"]
+    }
+  }
+}
+```
+
+Tools are named `chrome_devtools_*`, servers disconnect after 5 minutes.
+
+### No Prefix, No Timeout
+
+```json
+{
+  "settings": {
+    "toolPrefix": "none",
+    "idleTimeout": 0
+  },
+  "mcpServers": {
+    "my-only-server": {
+      "command": "npx",
+      "args": ["-y", "my-mcp-server"]
+    }
+  }
+}
+```
+
+Tools use their original names (`take_screenshot` instead of `my_only_server_take_screenshot`), server never disconnects.
+
+### Direct Tools Globally
+
+```json
+{
+  "settings": {
+    "directTools": true
+  },
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"]
+    },
+    "huge-api": {
+      "directTools": false  // Override: too many tools
+    }
+  }
+}
+```
+
+All servers register direct tools except `huge-api`.
+
+### Mixed Lifecycle and Timeouts
+
+```json
+{
+  "settings": {
+    "idleTimeout": 10
+  },
+  "mcpServers": {
+    "lazy-server": {
+      "lifecycle": "lazy",
+      "idleTimeout": 2  // Short timeout for quick disconnect
+    },
+    "database": {
+      "lifecycle": "keep-alive"  // Always connected, no timeout
+    },
+    "cache": {
+      "lifecycle": "eager",
+      "idleTimeout": 0  // Connect at startup, never disconnect
+    }
+  }
+}
+```
+
+## Validation
+
+Invalid settings are ignored and logged to the console:
+
+```json
+{
+  "settings": {
+    "toolPrefix": "invalid",  // ❌ Ignored, falls back to "server"
+    "idleTimeout": -5,        // ❌ Ignored, falls back to 10
+    "directTools": "yes"      // ❌ Ignored, falls back to false
+  }
+}
+```
+
+## Related
+
+- [Server Options](/api/server-options) - Per-server configuration
+- [Types Reference](/api/types) - TypeScript interfaces
+- [/mcp Command](/api/mcp-command) - Interactive server management

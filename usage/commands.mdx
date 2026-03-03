@@ -1,0 +1,409 @@
+---
+title: "Commands"
+description: "Use /mcp and /mcp-auth commands to manage MCP servers"
+---
+
+Pi provides two commands for managing MCP servers: `/mcp` for server management and `/mcp-auth` for OAuth authentication.
+
+## /mcp command
+
+The primary command for interacting with MCP servers.
+
+### Interactive panel (default)
+
+Running `/mcp` without arguments opens an interactive overlay:
+
+```bash
+/mcp
+```
+
+**Features:**
+- View all configured servers and their status
+- See tool counts (direct vs proxy)
+- Toggle individual tools or entire servers between direct and proxy modes
+- Reconnect servers
+- Initiate OAuth flows
+- Real-time connection status
+
+<Info>
+Changes made in the panel are written to your config file. **Restart Pi** to apply direct tool changes.
+</Info>
+
+### Status (non-UI mode)
+
+In headless or non-UI environments, `/mcp` shows text-based status:
+
+```bash
+/mcp status
+```
+
+**Output:**
+```
+MCP Server Status:
+
+✓ chrome-devtools: connected (26 tools)
+○ github: cached (21 tools, cached)
+✗ database: failed 45s ago
+```
+
+**Status indicators:**
+- `✓` Connected and active
+- `○` Not connected (metadata available from cache)
+- `✗` Connection failed recently
+
+### Reconnect servers
+
+Force reconnect to one or all servers:
+
+<Tabs>
+  <Tab title="All servers">
+    ```bash
+    /mcp reconnect
+    ```
+
+    Reconnects all configured servers in parallel.
+
+    **When to use:**
+    - Multiple servers failed
+    - Config changes require reconnection
+    - Refresh all metadata
+  </Tab>
+
+  <Tab title="Single server">
+    ```bash
+    /mcp reconnect github
+    ```
+
+    Reconnects only the specified server.
+
+    **When to use:**
+    - Specific server failed
+    - Updated server credentials
+    - Testing single server connectivity
+  </Tab>
+</Tabs>
+
+**What reconnect does:**
+1. Closes existing connection (if any)
+2. Starts new server process
+3. Fetches fresh tool and resource metadata
+4. Updates cache
+5. Shows notification with tool count
+
+<Note>
+Reconnect does **not** require Pi restart. Changes to tool metadata are immediate. However, direct tool registration changes still require restart.
+</Note>
+
+### List all tools
+
+Show every tool from all connected and cached servers:
+
+```bash
+/mcp tools
+```
+
+**Output:**
+```
+MCP Tools:
+
+  chrome_devtools_navigate
+  chrome_devtools_screenshot
+  chrome_devtools_click
+  github_search_repositories
+  github_get_file_contents
+  ...
+
+Total: 47 tools
+```
+
+Includes both connected and cached servers. Useful for getting a quick overview of all available tools.
+
+## /mcp-auth command
+
+Authenticate with MCP servers that require OAuth.
+
+### Basic usage
+
+```bash
+/mcp-auth <server-name>
+```
+
+**Example:**
+```bash
+/mcp-auth github
+```
+
+### OAuth flow
+
+<Steps>
+  <Step title="Initiate authentication">
+    Run the command:
+    ```bash
+    /mcp-auth github
+    ```
+  </Step>
+
+  <Step title="Follow instructions">
+    Pi displays:
+    - OAuth authorization URL
+    - Instructions for completing the flow
+
+    The server may provide:
+    - Device code flow (GitHub, Google)
+    - Browser redirect flow
+    - Manual token entry
+  </Step>
+
+  <Step title="Complete in browser">
+    Open the provided URL and complete authentication.
+  </Step>
+
+  <Step title="Return to Pi">
+    Once authenticated, the server connection updates automatically.
+  </Step>
+</Steps>
+
+### OAuth configuration
+
+For servers that support OAuth, configure the auth type:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "auth": "oauth"
+    }
+  }
+}
+```
+
+**Supported auth types:**
+- `"oauth"` - OAuth 2.0 flow (use `/mcp-auth`)
+- `"bearer"` - Static bearer token (set `bearerToken` or `bearerTokenEnv`)
+
+### Token storage
+
+OAuth tokens are stored in:
+```
+~/.pi/agent/mcp-oauth-tokens.json
+```
+
+**Format:**
+```json
+{
+  "github": {
+    "access_token": "gho_...",
+    "token_type": "bearer",
+    "expires_at": 1234567890
+  }
+}
+```
+
+<Warning>
+**Token lifecycle:**
+- Tokens are persisted across Pi sessions
+- No automatic refresh (manual re-auth required)
+- Expired tokens require running `/mcp-auth` again
+</Warning>
+
+### Bearer token alternative
+
+If you already have a token, use bearer auth instead of OAuth:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "auth": "bearer",
+      "bearerToken": "ghp_YourTokenHere"
+    }
+  }
+}
+```
+
+**Or use environment variable:**
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "auth": "bearer",
+      "bearerTokenEnv": "GITHUB_TOKEN"
+    }
+  }
+}
+```
+
+Then set the environment variable:
+```bash
+export GITHUB_TOKEN=ghp_YourTokenHere
+pi
+```
+
+## Command reference
+
+### /mcp
+
+| Subcommand | Description | Example |
+|------------|-------------|----------|
+| (none) | Open interactive panel (UI) or show status (non-UI) | `/mcp` |
+| `status` | Show server status | `/mcp status` |
+| `tools` | List all tools | `/mcp tools` |
+| `reconnect` | Reconnect all servers | `/mcp reconnect` |
+| `reconnect <server>` | Reconnect specific server | `/mcp reconnect github` |
+
+### /mcp-auth
+
+| Usage | Description |
+|-------|-------------|
+| `/mcp-auth <server>` | Initiate OAuth flow for server |
+
+## Common workflows
+
+### Server failed to connect
+
+<Steps>
+  <Step title="Check status">
+    ```bash
+    /mcp status
+    ```
+    Identify which server failed.
+  </Step>
+
+  <Step title="Reconnect">
+    ```bash
+    /mcp reconnect <server-name>
+    ```
+  </Step>
+
+  <Step title="Check credentials">
+    If reconnect fails, verify:
+    - Server command is correct
+    - Required environment variables are set
+    - Authentication (if needed) is valid
+  </Step>
+
+  <Step title="Re-authenticate (if OAuth)">
+    ```bash
+    /mcp-auth <server-name>
+    ```
+  </Step>
+</Steps>
+
+### Update server configuration
+
+<Steps>
+  <Step title="Edit config">
+    Modify `~/.pi/agent/mcp.json` or `.pi/mcp.json`
+  </Step>
+
+  <Step title="Reconnect">
+    ```bash
+    /mcp reconnect <server-name>
+    ```
+    Applies new config without restarting Pi.
+  </Step>
+
+  <Step title="Restart (if needed)">
+    Only required for:
+    - Direct tool changes
+    - Global settings changes
+    - Adding/removing servers
+  </Step>
+</Steps>
+
+### Toggle direct tools
+
+<Steps>
+  <Step title="Open panel">
+    ```bash
+    /mcp
+    ```
+  </Step>
+
+  <Step title="Toggle tools">
+    Use the interactive UI to switch tools between direct and proxy modes.
+  </Step>
+
+  <Step title="Restart Pi">
+    Direct tool registration happens at startup:
+    ```bash
+    # Exit and restart Pi
+    ```
+  </Step>
+</Steps>
+
+### Refresh metadata cache
+
+<Steps>
+  <Step title="Reconnect servers">
+    ```bash
+    /mcp reconnect
+    ```
+    Updates `~/.pi/agent/mcp-cache.json` with fresh tool metadata.
+  </Step>
+
+  <Step title="Verify">
+    ```bash
+    /mcp tools
+    ```
+    Check that tools are listed correctly.
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Command not found
+
+**Problem:** `/mcp` or `/mcp-auth` returns "command not found"
+
+**Solution:** The MCP adapter extension isn't loaded. Verify installation:
+```bash
+pi install npm:pi-mcp-adapter
+```
+Then restart Pi.
+
+### Interactive panel doesn't open
+
+**Problem:** `/mcp` shows text output instead of the panel
+
+**Cause:** Running in non-UI mode (headless, SSH, etc.)
+
+**Solution:** Use subcommands instead:
+- `/mcp status`
+- `/mcp tools`
+- `/mcp reconnect`
+
+### Reconnect fails silently
+
+**Problem:** `/mcp reconnect <server>` completes but server still shows as failed
+
+**Debugging steps:**
+1. Check server config in `mcp.json`
+2. Verify command exists: `which <command>`
+3. Test command manually: `npx -y server-name`
+4. Check environment variables are set
+5. Look for errors in Pi logs
+
+### OAuth flow doesn't complete
+
+**Problem:** `/mcp-auth <server>` starts but doesn't finish
+
+**Common causes:**
+- Browser didn't open (copy URL manually)
+- Incorrect redirect URI
+- Network issues
+
+**Solution:** Try again and follow all displayed instructions carefully. Some servers require manual token entry.
+
+<Note>
+**Next steps:**
+- Learn about the [mcp() proxy tool](/usage/tool-proxy)
+- Configure [direct tools](/usage/direct-tools)
+- Explore [search capabilities](/usage/search)
+</Note>

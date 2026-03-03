@@ -1,0 +1,427 @@
+---
+title: "Environment Variables"
+description: "Control adapter behavior with environment variables like MCP_DIRECT_TOOLS"
+---
+
+## MCP_DIRECT_TOOLS
+
+The `MCP_DIRECT_TOOLS` environment variable overrides `directTools` configuration from `mcp.json`. This is useful for:
+
+- Testing direct tool registration without modifying config files
+- Temporarily exposing tools for a single session
+- Debugging tool registration issues
+- Scripting Pi with specific tool sets
+
+### Syntax
+
+Set the variable before starting Pi:
+
+```bash
+export MCP_DIRECT_TOOLS="server1,server2/tool_name,server3"
+pi
+```
+
+<Tip>
+From `index.ts:242-250`, the adapter splits `MCP_DIRECT_TOOLS` on commas, then parses each segment as either a server name (expose all tools) or `server/tool` (expose specific tool).
+</Tip>
+
+### Format Options
+
+<CodeGroup>
+```bash All Tools from Server
+# Expose all tools from chrome-devtools
+export MCP_DIRECT_TOOLS="chrome-devtools"
+pi
+```
+
+```bash Specific Tools
+# Expose only these tools from github
+export MCP_DIRECT_TOOLS="github/search_repositories,github/get_file_contents"
+pi
+```
+
+```bash Mixed
+# All tools from filesystem, specific tools from github
+export MCP_DIRECT_TOOLS="filesystem,github/search_repositories,github/create_issue"
+pi
+```
+
+```bash Multiple Servers
+# All tools from multiple servers
+export MCP_DIRECT_TOOLS="chrome-devtools,postgres,puppeteer"
+pi
+```
+</CodeGroup>
+
+### Trailing Slashes
+
+Trailing slashes are stripped automatically:
+
+```bash
+# These are equivalent
+export MCP_DIRECT_TOOLS="github/"
+export MCP_DIRECT_TOOLS="github"
+```
+
+Both expose all tools from `github` server.
+
+### Special Value: `__none__`
+
+To disable **all** direct tools (including those configured in `mcp.json`):
+
+```bash
+export MCP_DIRECT_TOOLS="__none__"
+pi
+```
+
+This forces proxy-only mode for all servers, regardless of config. Useful for testing or reducing context usage.
+
+<Warning>
+From `index.ts:242-250`, if `MCP_DIRECT_TOOLS` is set to anything other than `__none__`, it **completely overrides** the `directTools` settings from your config file. The config is ignored.
+</Warning>
+
+## How MCP_DIRECT_TOOLS Works
+
+The adapter reads `MCP_DIRECT_TOOLS` at startup and resolves it against the metadata cache:
+
+1. **Parse** the environment variable into server/tool pairs
+2. **Load** metadata cache (`~/.pi/agent/mcp-cache.json`)
+3. **Filter** tools based on the parsed list
+4. **Register** matching tools as individual Pi tools
+
+### Cache Dependency
+
+Direct tools register from the **metadata cache**, not live connections. This means:
+
+- No server connections needed at startup (fast boot)
+- Tools must be cached before they can be direct
+- First-time setups require a cache bootstrap
+
+<Accordion title="What if the cache doesn't exist?">
+From `index.ts:1261-1298`, if direct tools are configured but not cached, the adapter:
+
+1. Connects to the server in the background
+2. Populates the cache
+3. Notifies you that tools will be available after restart
+
+To force cache creation: `/mcp reconnect <server>` then restart Pi.
+</Accordion>
+
+### Example: Bootstrap a New Server
+
+```bash
+# 1. Add server to config
+cat >> ~/.pi/agent/mcp.json <<EOF
+{
+  "mcpServers": {
+    "new-server": {
+      "command": "npx",
+      "args": ["-y", "some-mcp-server"]
+    }
+  }
+}
+EOF
+
+# 2. Set MCP_DIRECT_TOOLS and start Pi
+export MCP_DIRECT_TOOLS="new-server"
+pi
+
+# 3. Cache populates in background
+# 4. Restart Pi - direct tools now available
+```
+
+## Environment Variable Interpolation in Config
+
+The `env` field in server definitions supports `${VAR}` interpolation:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+Set the environment variable before starting Pi:
+
+```bash
+export GITHUB_TOKEN="ghp_your_token_here"
+pi
+```
+
+The adapter interpolates `${GITHUB_TOKEN}` when spawning the server process.
+
+### Multiple Variables
+
+```json
+{
+  "env": {
+    "DATABASE_HOST": "${DB_HOST}",
+    "DATABASE_PORT": "${DB_PORT}",
+    "DATABASE_PASSWORD": "${DB_PASSWORD}"
+  }
+}
+```
+
+```bash
+export DB_HOST="localhost"
+export DB_PORT="5432"
+export DB_PASSWORD="secretpassword"
+pi
+```
+
+### Fallback Values
+
+The adapter does **not** support fallback syntax like `${VAR:-default}`. If the variable is unset, it remains as the literal string `${VAR}`.
+
+<Warning>
+From the MCP SDK's transport implementation, if an environment variable is not set, the server process receives the literal string `${VAR}`. This may cause authentication or connection failures.
+</Warning>
+
+Always ensure required variables are set before starting Pi.
+
+## Bearer Token Variables
+
+For HTTP servers with bearer authentication, use `bearerTokenEnv` instead of `env`:
+
+```json
+{
+  "mcpServers": {
+    "api-server": {
+      "url": "https://api.example.com/mcp",
+      "auth": "bearer",
+      "bearerTokenEnv": "API_TOKEN"
+    }
+  }
+}
+```
+
+```bash
+export API_TOKEN="your-bearer-token"
+pi
+```
+
+This sets the `Authorization: Bearer <token>` header for HTTP requests.
+
+<Tip>
+From `types.ts:58-68`, you can also use `bearerToken` directly in the config, but this embeds the secret in a file. `bearerTokenEnv` is more secure.
+</Tip>
+
+## Tool Prefix Environment Variable
+
+**Not implemented.** The `toolPrefix` setting is only configurable via `mcp.json`:
+
+```json
+{
+  "settings": {
+    "toolPrefix": "server"  // or "short" or "none"
+  }
+}
+```
+
+There's no environment variable override for this.
+
+## Debugging Environment
+
+### Enable Server Debug Output
+
+Set `debug: true` in server config to see stderr:
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "node",
+      "args": ["server.js"],
+      "debug": true
+    }
+  }
+}
+```
+
+Server stderr will be logged to Pi's console. Useful for diagnosing server startup issues.
+
+### Node Debug Flags
+
+To debug the adapter itself, pass Node flags to Pi:
+
+```bash
+node --inspect $(which pi)
+```
+
+Or set environment variables:
+
+```bash
+export NODE_OPTIONS="--inspect"
+pi
+```
+
+## Common Patterns
+
+### Per-Environment Configuration
+
+Use environment variables to switch between dev/staging/prod:
+
+```json
+{
+  "mcpServers": {
+    "database": {
+      "env": {
+        "DB_HOST": "${DB_HOST}",
+        "DB_NAME": "${DB_NAME}"
+      }
+    }
+  }
+}
+```
+
+```bash Dev
+export DB_HOST="localhost"
+export DB_NAME="myapp_dev"
+pi
+```
+
+```bash Production
+export DB_HOST="prod.example.com"
+export DB_NAME="myapp_prod"
+pi
+```
+
+### Secrets Management
+
+Load secrets from a file:
+
+```bash
+# .env file
+GITHUB_TOKEN=ghp_...
+DATABASE_PASSWORD=...
+API_KEY=...
+```
+
+```bash
+# Load and start Pi
+source .env
+pi
+```
+
+Or use a secrets manager:
+
+```bash
+# 1Password CLI example
+export GITHUB_TOKEN=$(op read "op://vault/github-token/token")
+pi
+```
+
+### CI/CD Integration
+
+Set environment variables in CI for automated sessions:
+
+```yaml GitHub Actions
+env:
+  MCP_DIRECT_TOOLS: "__none__"  # Proxy only in CI
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+steps:
+  - run: pi --non-interactive < prompt.txt
+```
+
+## Precedence Summary
+
+For **direct tools**, precedence is:
+
+1. `MCP_DIRECT_TOOLS` environment variable (if set and not `__none__`)
+2. Per-server `directTools` in config
+3. Global `settings.directTools` in config
+4. Default: `false` (proxy only)
+
+For **secrets/credentials**:
+
+1. `bearerToken` or `env` values in config (literal or interpolated)
+2. Environment variables (if referenced with `${VAR}`)
+
+For **settings** (toolPrefix, idleTimeout):
+
+1. Project config `.pi/mcp.json`
+2. Global config `~/.pi/agent/mcp.json`
+3. Defaults (`toolPrefix: "server"`, `idleTimeout: 10`)
+
+## Troubleshooting
+
+### MCP_DIRECT_TOOLS Not Working
+
+**Symptom**: Setting `MCP_DIRECT_TOOLS` but tools don't appear.
+
+**Causes**:
+
+1. **Cache doesn't exist**: See "Cache Dependency" above. Run `/mcp reconnect <server>` and restart Pi.
+
+2. **Typo in server name**: Server names are case-sensitive and must match `mcpServers` keys exactly.
+   ```bash
+   # Wrong
+   export MCP_DIRECT_TOOLS="GitHub"  # Config has "github"
+   
+   # Correct
+   export MCP_DIRECT_TOOLS="github"
+   ```
+
+3. **Tool name mismatch**: Use the **original MCP tool name**, not the prefixed Pi tool name.
+   ```bash
+   # Wrong
+   export MCP_DIRECT_TOOLS="github/github_search_repositories"
+   
+   # Correct
+   export MCP_DIRECT_TOOLS="github/search_repositories"
+   ```
+
+4. **Variable not exported**: Use `export`, not just assignment:
+   ```bash
+   # Wrong
+   MCP_DIRECT_TOOLS="github"  # Not exported
+   pi
+   
+   # Correct
+   export MCP_DIRECT_TOOLS="github"
+   pi
+   ```
+
+### Environment Variable Not Interpolated
+
+**Symptom**: Server fails to connect, logs show `${VAR}` instead of the value.
+
+**Solution**: Export the variable before starting Pi:
+
+```bash
+# Check if set
+echo $GITHUB_TOKEN
+
+# If empty, set it
+export GITHUB_TOKEN="your-token"
+
+# Then start Pi
+pi
+```
+
+### Conflicting Direct Tools
+
+**Symptom**: Warning message about duplicate or colliding tool names.
+
+**Cause**: Two servers expose tools with the same prefixed name, or a tool collides with a Pi builtin.
+
+From `index.ts:138-146`, builtin names are protected: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`, `mcp`.
+
+**Solution**:
+
+1. Use `toolPrefix: "server"` instead of `"none"` to namespace tools
+2. Explicitly list tools instead of `true` to avoid conflicts:
+   ```json
+   {
+     "directTools": ["specific_tool_1", "specific_tool_2"]
+   }
+   ```

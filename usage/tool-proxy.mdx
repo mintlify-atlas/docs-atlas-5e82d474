@@ -1,0 +1,323 @@
+---
+title: "MCP Proxy Tool"
+description: "Learn how to use the mcp() proxy tool to access MCP servers on-demand"
+---
+
+The `mcp()` proxy tool is the primary way to interact with MCP servers. It provides a unified interface that keeps your context window small while giving you access to hundreds of tools across multiple servers.
+
+## Why use a proxy?
+
+Traditional MCP integrations register every tool directly with the LLM. A single MCP server with 50 tools can consume 10,000+ tokens before the conversation even starts. Connect three servers and you've burned half your context window.
+
+The `mcp()` proxy tool solves this by:
+
+- Using ~200 tokens instead of thousands
+- Loading tool details only when needed
+- Supporting lazy connections (servers start on first use)
+- Enabling discovery through search
+
+<Info>
+The proxy is the default mode. All MCP tools are accessible through `mcp()` unless you explicitly configure [direct tools](/usage/direct-tools).
+</Info>
+
+## Usage modes
+
+The `mcp()` tool has six modes, determined by which parameters you provide:
+
+<Tabs>
+  <Tab title="Status">
+    Show all configured servers and their connection status.
+
+    ```javascript
+    mcp({})
+    ```
+
+    **Output:**
+    ```
+    MCP: 2/3 servers, 47 tools
+
+    ✓ chrome-devtools (26 tools)
+    ○ github (21 tools, cached)
+    ✗ database (failed 30s ago)
+
+    mcp({ server: "name" }) to list tools, mcp({ search: "..." }) to search
+    ```
+
+    Status indicators:
+    - `✓` Connected and active
+    - `○` Not connected (metadata cached)
+    - `✗` Connection failed recently
+  </Tab>
+
+  <Tab title="List">
+    List all tools from a specific server.
+
+    ```javascript
+    mcp({ server: "chrome-devtools" })
+    ```
+
+    **Output:**
+    ```
+    chrome-devtools (26 tools):
+
+    - chrome_devtools_navigate - Navigate to a URL
+    - chrome_devtools_screenshot - Take a screenshot of the page
+    - chrome_devtools_click - Click an element by selector
+    - chrome_devtools_get_console_logs - Get console logs
+    ...
+    ```
+
+    Works with cached metadata - no connection required.
+  </Tab>
+
+  <Tab title="Search">
+    Search for tools across all MCP servers and Pi tools.
+
+    ```javascript
+    mcp({ search: "screenshot navigate" })
+    ```
+
+    **Output:**
+    ```
+    Found 3 tools matching "screenshot navigate":
+
+    chrome_devtools_navigate
+      Navigate to a URL in the browser.
+
+      Parameters:
+        url (string) *required* - The URL to navigate to
+        waitUntil (enum: "load", "domcontentloaded", "networkidle") [default: "load"]
+
+    chrome_devtools_screenshot
+      Take a screenshot of the page or element.
+
+      Parameters:
+        format (enum: "png", "jpeg", "webp") [default: "png"]
+        fullPage (boolean) - Full page instead of viewport
+
+    &#91;pi tool] bash
+      Execute bash commands
+      No parameters (call directly).
+    ```
+
+    Search behavior:
+    - Space-separated terms are OR'd ("screenshot navigate" finds tools matching either word)
+    - Searches tool names and descriptions
+    - Includes Pi tools (marked with `[pi tool]` prefix)
+    - No server connection required (uses cached metadata)
+  </Tab>
+
+  <Tab title="Describe">
+    Get detailed information about a specific tool, including its parameters.
+
+    ```javascript
+    mcp({ describe: "chrome_devtools_screenshot" })
+    ```
+
+    **Output:**
+    ```
+    chrome_devtools_screenshot
+    Server: chrome-devtools
+
+    Take a screenshot of the page or element.
+
+    Parameters:
+      format (enum: "png", "jpeg", "webp") [default: "png"]
+      fullPage (boolean) - Full page instead of viewport
+      quality (number) - Image quality 0-100 (JPEG/WebP only)
+      selector (string) - CSS selector for specific element
+    ```
+
+    Use this to understand what parameters a tool accepts before calling it.
+  </Tab>
+
+  <Tab title="Call">
+    Execute a tool with the specified arguments.
+
+    ```javascript
+    mcp({ 
+      tool: "chrome_devtools_screenshot", 
+      args: '{"format": "png", "fullPage": true}' 
+    })
+    ```
+
+    <Warning>
+    The `args` parameter must be a **JSON string**, not an object. This is a Pi limitation.
+    </Warning>
+
+    **Arguments as JSON string:**
+    - Simple: `args: '{"url": "https://example.com"}'`
+    - Multiple params: `args: '{"format": "png", "fullPage": true}'`
+    - Empty (no args): Omit the `args` parameter entirely
+
+    **Output:**
+    The tool returns whatever the MCP server provides - usually text, but can include images or other content types.
+
+    If the tool fails, you'll receive an error message with the expected parameter schema to help you correct it.
+  </Tab>
+
+  <Tab title="Connect">
+    Explicitly connect to a server and refresh its metadata.
+
+    ```javascript
+    mcp({ connect: "chrome-devtools" })
+    ```
+
+    **When to use:**
+    - Server failed to connect at startup
+    - You want to refresh tool metadata
+    - Testing server connectivity
+
+    Most of the time, you don't need this - servers connect automatically when you call their tools (lazy connection).
+  </Tab>
+</Tabs>
+
+## Tool discovery workflow
+
+Typical workflow for discovering and using MCP tools:
+
+<Steps>
+  <Step title="Search for capabilities">
+    Use broad search terms to find relevant tools.
+
+    ```javascript
+    mcp({ search: "browser screenshot" })
+    ```
+  </Step>
+
+  <Step title="Describe to see parameters">
+    Get the full schema for a tool you want to use.
+
+    ```javascript
+    mcp({ describe: "chrome_devtools_screenshot" })
+    ```
+  </Step>
+
+  <Step title="Call with arguments">
+    Execute the tool with appropriate parameters.
+
+    ```javascript
+    mcp({ 
+      tool: "chrome_devtools_screenshot", 
+      args: '{"format": "png"}' 
+    })
+    ```
+  </Step>
+</Steps>
+
+## Advanced usage
+
+### Server disambiguation
+
+If multiple servers have tools with similar names, specify which server to use:
+
+```javascript
+mcp({ 
+  tool: "search_repositories",
+  server: "github",
+  args: '{"query": "mcp"}'
+})
+```
+
+### Regex search
+
+For advanced search patterns, enable regex mode:
+
+```javascript
+mcp({ 
+  search: "^get_.*file",
+  regex: true 
+})
+```
+
+### Compact search results
+
+Hide parameter schemas to save tokens when you just need tool names:
+
+```javascript
+mcp({ 
+  search: "database",
+  includeSchemas: false 
+})
+```
+
+Output:
+```
+Found 5 tools matching "database":
+
+- postgres_query - Execute SQL query
+- postgres_list_tables - List all tables
+- postgres_describe_table - Show table schema
+...
+```
+
+## Tool name normalization
+
+MCP tools often use hyphens (e.g., `resolve-library-id`) but get prefixed with underscores (e.g., `context7_resolve-library-id`). The proxy automatically normalizes these:
+
+- `context7_resolve_library_id` (all underscores) → finds `context7_resolve-library-id`
+- Exact matches are tried first
+- Normalized matches are fallback
+
+This helps LLMs that naturally guess all-underscore names.
+
+## Resource tools
+
+MCP resources (files, documents, data sources) are exposed as `get_*` tools unless you disable them:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "...",
+      "exposeResources": false  // Hide resource tools
+    }
+  }
+}
+```
+
+Resource tools:
+- Named `get_<resource_name>`
+- Take no parameters
+- Return the resource content
+- Included in search results
+
+Example:
+```javascript
+// A filesystem server exposes documents/readme.md as:
+mcp({ tool: "filesystem_get_documents_readme_md" })
+```
+
+## Error handling
+
+The proxy provides helpful error messages:
+
+### Tool not found
+```
+Tool "invalid_tool" not found. Use mcp({ search: "..." }) to search.
+```
+
+### Server unavailable
+```
+Server "github" not available (last failed 45s ago)
+```
+
+Failed servers are backed off for 60 seconds to avoid repeated connection attempts.
+
+### Parameter validation
+```
+Error: Missing required parameter: url
+
+Expected parameters:
+  url (string) *required* - The URL to navigate to
+  waitUntil (enum: "load", "domcontentloaded", "networkidle") [default: "load"]
+```
+
+The MCP server validates parameters, not the adapter. Error messages include the expected schema to help you fix the issue.
+
+<Note>
+**Next steps:**
+- Configure [direct tools](/usage/direct-tools) for frequently used tools
+- Learn about [search capabilities](/usage/search) across MCP and Pi tools
+- Use [commands](/usage/commands) for server management
+</Note>

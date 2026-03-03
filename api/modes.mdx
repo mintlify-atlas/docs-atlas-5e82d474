@@ -1,0 +1,410 @@
+---
+title: "Operation Modes"
+description: "Detailed documentation for all mcp() tool operation modes: status, list, search, describe, call, and connect"
+---
+
+## Overview
+
+The `mcp()` tool operates in different modes based on which parameters you provide. Mode resolution follows this priority:
+
+**tool** (call) > **connect** > **describe** > **search** > **server** (list) > **status**
+
+## Status Mode
+
+Shows the connection status and tool count for all configured servers.
+
+### Trigger
+
+Call `mcp()` with no parameters or an empty object:
+
+```typescript
+mcp({})
+```
+
+### Response
+
+```
+MCP: 2/3 servers, 47 tools
+
+✓ chrome-devtools (26 tools)
+✓ github (21 tools)
+○ postgres (not connected)
+
+mcp({ server: "name" }) to list tools, mcp({ search: "..." }) to search
+```
+
+### Status Indicators
+
+- `✓` - Connected
+- `○` - Not connected (cached metadata available)
+- `✗` - Failed (includes time since last failure)
+
+### Details Object
+
+```typescript
+{
+  mode: "status",
+  servers: Array<{
+    name: string,
+    status: "connected" | "cached" | "failed" | "not connected",
+    toolCount: number
+  }>,
+  totalTools: number,
+  connectedCount: number
+}
+```
+
+## List Mode
+
+Lists all tools from a specific server.
+
+### Trigger
+
+Provide the `server` parameter:
+
+```typescript
+mcp({ server: "chrome-devtools" })
+```
+
+### Response
+
+```
+chrome-devtools (26 tools):
+
+- chrome_devtools_navigate - Navigate to a URL
+- chrome_devtools_take_screenshot - Take a screenshot of the page
+- chrome_devtools_get_console_logs - Get console logs
+...
+```
+
+If the server is not connected but has cached metadata, the output includes `(not connected, cached)`.
+
+### Details Object
+
+```typescript
+{
+  mode: "list",
+  server: string,
+  tools: string[],
+  count: number,
+  cached?: boolean,
+  error?: "not_found" | "not_connected"
+}
+```
+
+### Errors
+
+- **Server not found** - If the server name doesn't exist in config
+- **Not connected** - If the server has no cached metadata and isn't connected
+
+## Search Mode
+
+Searches for tools by name or description. Searches both MCP tools and Pi tools from installed extensions.
+
+### Trigger
+
+Provide the `search` parameter:
+
+```typescript
+mcp({ search: "screenshot navigate" })
+```
+
+### Search Behavior
+
+- **Default**: Space-separated words are OR'd (matches if *any* word is found)
+- **Regex mode**: Set `regex: true` to use regular expression matching
+- **Case-insensitive** by default
+
+### Response (with schemas)
+
+```
+Found 3 tools matching "screenshot navigate":
+
+&#91;pi tool] read
+  Read a file from the filesystem
+  No parameters (call directly).
+
+chrome_devtools_take_screenshot
+  Take a screenshot of the page or element.
+
+  Parameters:
+    format (enum: "png", "jpeg", "webp") [default: "png"]
+    fullPage (boolean) - Full page instead of viewport
+
+chrome_devtools_navigate
+  Navigate to a URL.
+
+  Parameters:
+    url (string) *required* - The URL to navigate to
+```
+
+### Compact Output
+
+Set `includeSchemas: false` for compact results without parameter details:
+
+```typescript
+mcp({ search: "screenshot", includeSchemas: false })
+```
+
+```
+Found 1 tool matching "screenshot":
+
+- chrome_devtools_take_screenshot - Take a screenshot of the page or element
+```
+
+### Filter by Server
+
+Combine `search` and `server` to search within a specific server:
+
+```typescript
+mcp({ search: "file", server: "github" })
+```
+
+### Details Object
+
+```typescript
+{
+  mode: "search",
+  matches: Array<{
+    server: string,  // "pi" for Pi tools
+    tool: string
+  }>,
+  count: number,
+  query: string,
+  error?: "empty_query" | "invalid_pattern"
+}
+```
+
+### Errors
+
+- **Empty query** - Search string is empty or only whitespace
+- **Invalid pattern** - Regex is malformed (only in regex mode)
+
+## Describe Mode
+
+Shows detailed information about a specific tool, including its parameter schema.
+
+### Trigger
+
+Provide the `describe` parameter:
+
+```typescript
+mcp({ describe: "chrome_devtools_take_screenshot" })
+```
+
+### Response
+
+```
+chrome_devtools_take_screenshot
+Server: chrome-devtools
+
+Take a screenshot of the page or element.
+
+Parameters:
+  format (enum: "png", "jpeg", "webp") [default: "png"]
+  fullPage (boolean) - Full page instead of viewport
+  selector (string) - CSS selector to screenshot specific element
+```
+
+### Parameter Schema Format
+
+Each parameter shows:
+- **Name**
+- **Type** (string, number, boolean, enum, object, array, etc.)
+- **Required** indicator (`*required*` suffix)
+- **Description** (if available)
+- **Default value** (if specified in schema)
+- **Enum values** (for enum types)
+
+### Resource Tools
+
+For resource tools (tools that read MCP resources), the output indicates no parameters are required:
+
+```
+get_project_file
+Server: filesystem
+Type: Resource (reads from file://project/)
+
+Read a project file.
+
+No parameters required (resource tool).
+```
+
+### Details Object
+
+```typescript
+{
+  mode: "describe",
+  tool: ToolMetadata,
+  server: string,
+  error?: "tool_not_found"
+}
+```
+
+### Errors
+
+- **Tool not found** - No tool with that name exists
+
+## Call Mode
+
+Calls an MCP tool with the provided arguments.
+
+### Trigger
+
+Provide the `tool` parameter:
+
+```typescript
+mcp({
+  tool: "chrome_devtools_take_screenshot",
+  args: '{"format": "png", "fullPage": true}'
+})
+```
+
+<Warning>
+  The `args` parameter must be a JSON **string**, not an object.
+</Warning>
+
+### Arguments Validation
+
+The `args` parameter is:
+1. Parsed from JSON string to object
+2. Validated to ensure it's an object (not null, array, or primitive)
+3. Sent to the MCP server for execution
+
+The MCP server validates the arguments against its schema.
+
+### Server Discovery
+
+If no `server` parameter is provided, the tool attempts to find the server by:
+
+1. **Exact tool name match** across all cached metadata
+2. **Normalized match** (hyphens/underscores treated as equivalent)
+3. **Prefix extraction** - If tool name starts with a server prefix, lazy-connect to that server
+
+### Lazy Connection
+
+Servers are connected on-demand:
+- If the server is already connected, the tool is called immediately
+- If not connected but in cache, the server connects first
+- If connection fails, a backoff timer prevents repeated connection attempts
+
+### Response
+
+Successful tool calls return the content from the MCP server:
+
+```typescript
+{
+  content: [
+    { type: "text", text: "Screenshot saved to /tmp/screenshot.png" },
+    { type: "image", data: "base64...", mimeType: "image/png" }
+  ],
+  details: {
+    mode: "call",
+    server: "chrome-devtools",
+    tool: "take_screenshot",
+    mcpResult: { /* raw MCP response */ }
+  }
+}
+```
+
+### Error Responses
+
+Errors include the expected parameter schema to help with self-correction:
+
+```
+Error: Missing required parameter: url
+
+Expected parameters:
+  url (string) *required* - The URL to navigate to
+  timeout (number) - Navigation timeout in ms [default: 30000]
+```
+
+### Details Object
+
+```typescript
+{
+  mode: "call",
+  server?: string,
+  tool?: string,
+  resourceUri?: string,  // For resource tools
+  mcpResult?: object,    // Raw MCP response
+  error?: "tool_not_found" | "server_not_found" | "server_unavailable" | 
+          "not_connected" | "server_backoff" | "tool_error" | "call_failed"
+}
+```
+
+### Errors
+
+- **Tool not found** - Includes available tools from matched server
+- **Server unavailable** - Includes backoff timer information
+- **Tool error** - The tool ran but returned an error
+- **Call failed** - Network error, crash, or validation failure
+
+## Connect Mode
+
+Explicitly connects to a server and refreshes its metadata cache.
+
+### Trigger
+
+Provide the `connect` parameter:
+
+```typescript
+mcp({ connect: "chrome-devtools" })
+```
+
+### Behavior
+
+1. Forces a connection to the specified server (even if already connected)
+2. Fetches fresh tool and resource metadata
+3. Updates the metadata cache
+4. Returns the tool list (same as list mode)
+
+### Use Cases
+
+- Manually refresh metadata after server updates
+- Force connection to a lazy server before needed
+- Recover from a failed connection (bypasses backoff timer)
+- Verify server configuration is working
+
+### Response
+
+Returns the same format as [list mode](#list-mode) after successful connection.
+
+### Details Object
+
+```typescript
+{
+  mode: "connect",
+  server: string,
+  error?: "not_found" | "connect_failed",
+  message?: string  // Error message if connection failed
+}
+```
+
+### Errors
+
+- **Server not found** - Server name not in config
+- **Connect failed** - Connection or initialization error
+
+## Mode Priority
+
+When multiple parameters are provided, the highest priority mode wins:
+
+```typescript
+// Calls the tool (call mode), ignores search parameter
+mcp({ tool: "navigate", args: '{}', search: "nav" })
+
+// Searches within a server (search mode + filter)
+mcp({ search: "file", server: "github" })
+
+// Lists server tools (list mode)
+mcp({ server: "github" })
+```
+
+Priority order: **tool** > **connect** > **describe** > **search** > **server** > **status**
+
+## Related
+
+- [mcp() Tool Reference](/api/mcp-tool) - Complete API documentation
+- [Tool Prefix Settings](/api/settings) - Configure tool naming
+- [Server Lifecycle](/api/server-options) - Control when servers connect

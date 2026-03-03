@@ -1,0 +1,432 @@
+---
+title: Token Efficiency
+description: How Pi MCP Adapter reduces context window usage through the proxy pattern
+---
+
+## The Problem
+
+MCP tool definitions are verbose. Each tool includes:
+
+- Tool name and description
+- JSON Schema for parameters (properties, types, required fields, descriptions)
+- Enum definitions
+- Default values
+- Nested object schemas
+
+A single MCP server can expose 20-100+ tools. At ~150-300 tokens per tool, connecting a few servers can consume **10,000+ tokens** before the conversation even starts.
+
+### Example: Chrome DevTools MCP
+
+The [chrome-devtools-mcp](https://github.com/badlogic/chrome-devtools-mcp) server exposes 26 tools. Registering all of them individually would consume approximately:
+
+```
+26 tools × ~200 tokens/tool = ~5,200 tokens
+```
+
+That's **5,200 tokens** for a single server, burned on every request to the LLM.
+
+## The Solution: Proxy Pattern
+
+Pi MCP Adapter replaces hundreds of tool definitions with a **single proxy tool**:
+
+```typescript
+pi.registerTool({
+  name: "mcp",
+  label: "MCP",
+  description: buildProxyDescription(earlyConfig, earlyCache, directSpecs),
+  parameters: Type.Object({
+    tool: Type.Optional(Type.String({ description: "Tool name to call" })),
+    args: Type.Optional(Type.String({ description: "Arguments as JSON string" })),
+    connect: Type.Optional(Type.String({ description: "Server name to connect" })),
+    describe: Type.Optional(Type.String({ description: "Tool name to describe" })),
+    search: Type.Optional(Type.String({ description: "Search tools by name/description" })),
+    regex: Type.Optional(Type.Boolean({ description: "Treat search as regex" })),
+    includeSchemas: Type.Optional(Type.Boolean({ description: "Include parameter schemas" })),
+    server: Type.Optional(Type.String({ description: "Filter to specific server" })),
+  }),
+  async execute(_toolCallId, params) {
+    // Route to appropriate mode
+  },
+})
+```
+
+The proxy tool consumes approximately **200 tokens** regardless of how many MCP servers or tools you have configured.
+
+### Token Savings Example
+
+| Approach | Servers | Total Tools | Tokens Used |
+|----------|---------|-------------|-------------|
+| **Direct registration** | 3 | 75 | ~15,000 |
+| **Pi MCP Adapter (proxy)** | 3 | 75 | ~200 |
+| **Savings** | | | **~14,800** (98.7% reduction) |
+
+With 5 servers and 150 tools, the savings exceed **25,000 tokens** per request.
+
+## How the Proxy Works
+
+The proxy provides multiple modes of operation through a single tool interface:
+
+### 1. Discovery (Search)
+
+The LLM searches for tools by keyword:
+
+```typescript
+mcp({ search: "screenshot navigate" })
+```
+
+Response:
+
+```
+Found 3 tools matching "screenshot navigate":
+
+chrome_devtools_navigate
+  Navigate to a URL
+  
+  Parameters:
+    url (string) *required* - URL to navigate to
+
+chrome_devtools_take_screenshot
+  Take a screenshot of the page or element
+  
+  Parameters:
+    format (enum: "png", "jpeg", "webp") [default: "png"]
+    fullPage (boolean) - Full page instead of viewport
+
+chrome_devtools_screenshot_element
+  Take a screenshot of a specific element
+  
+  Parameters:
+    selector (string) *required* - CSS selector
+    format (enum: "png", "jpeg", "webp") [default: "png"]
+```
+
+<Info>
+Search results include full parameter schemas by default (`includeSchemas: true`). The LLM can proceed directly to calling the tool without an additional describe step.
+</Info>
+
+The search query supports space-separated OR matching:
+
+```typescript
+const terms = query.trim().split(/\s+/).filter(t => t.length > 0)
+const escaped = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+const pattern = new RegExp(escaped.join("|"), "i")
+```
+
+"screenshot navigate" matches tools containing either "screenshot" OR "navigate".
+
+### 2. Inspection (Describe)
+
+The LLM can request detailed information about a specific tool:
+
+```typescript
+mcp({ describe: "chrome_devtools_take_screenshot" })
+```
+
+Response:
+
+```
+chrome_devtools_take_screenshot
+Server: chrome-devtools
+
+Take a screenshot of the page or element.
+
+Parameters:
+  format (enum: "png", "jpeg", "webp") [default: "png"]
+  fullPage (boolean) - Full page instead of viewport
+```
+
+### 3. Execution (Call)
+
+The LLM calls a tool with arguments:
+
+```typescript
+mcp({ 
+  tool: "chrome_devtools_take_screenshot", 
+  args: '{"format": "png", "fullPage": true}' 
+})
+```
+
+The adapter:
+
+1. Parses the `args` JSON string
+2. Finds the tool in cached metadata
+3. Lazy-connects the server if needed
+4. Routes the call to the MCP server
+5. Transforms the response to Pi format
+
+<Note>
+Arguments are passed as a **JSON string**, not an object. This is a Pi limitation - tool parameters must match declared types, and TypeBox doesn't support arbitrary objects. The adapter parses the string and validates it's an object before calling the MCP server.
+</Note>
+
+## Token Cost Breakdown
+
+Here's a detailed breakdown of token costs for different approaches:
+
+### Traditional MCP (Direct Registration)
+
+```typescript
+pi.registerTool({
+  name: "chrome_devtools_take_screenshot",
+  description: "Take a screenshot of the page or element.",
+  parameters: Type.Object({
+    format: Type.Optional(Type.Union([
+      Type.Literal("png"),
+      Type.Literal("jpeg"),
+      Type.Literal("webp"),
+    ], { 
+      description: "Image format",
+      default: "png" 
+    })),
+    fullPage: Type.Optional(Type.Boolean({ 
+      description: "Capture full page instead of viewport" 
+    })),
+    quality: Type.Optional(Type.Number({ 
+      description: "Image quality (0-100, JPEG only)",
+      minimum: 0,
+      maximum: 100
+    })),
+    clip: Type.Optional(Type.Object({
+      x: Type.Number({ description: "X coordinate" }),
+      y: Type.Number({ description: "Y coordinate" }),
+      width: Type.Number({ description: "Width" }),
+      height: Type.Number({ description: "Height" }),
+    }, { description: "Clip region" })),
+    omitBackground: Type.Optional(Type.Boolean({ 
+      description: "Hide default white background" 
+    })),
+  }),
+  async execute(...) { }
+})
+```
+
+**Approximate token cost:** 280 tokens (for one tool)
+
+### Pi MCP Adapter (Proxy)
+
+The entire proxy tool definition:
+
+```typescript
+pi.registerTool({
+  name: "mcp",
+  label: "MCP",
+  description: `MCP gateway - connect to MCP servers and call their tools.
+
+Direct tools available (call as normal tools): chrome-devtools (26)
+
+Servers: github (12 tools), filesystem (8 tools)
+
+Usage:
+  mcp({ })                              → Show server status
+  mcp({ server: "name" })               → List tools from server
+  mcp({ search: "query" })              → Search for tools
+  mcp({ describe: "tool_name" })        → Show tool details
+  mcp({ connect: "server-name" })       → Connect and refresh
+  mcp({ tool: "name", args: '{...}' })  → Call a tool`,
+  parameters: Type.Object({
+    tool: Type.Optional(Type.String({ description: "Tool name to call" })),
+    args: Type.Optional(Type.String({ description: "Arguments as JSON string" })),
+    connect: Type.Optional(Type.String({ description: "Server name to connect" })),
+    describe: Type.Optional(Type.String({ description: "Tool name to describe" })),
+    search: Type.Optional(Type.String({ description: "Search tools by name/description" })),
+    regex: Type.Optional(Type.Boolean({ description: "Treat search as regex" })),
+    includeSchemas: Type.Optional(Type.Boolean({ description: "Include schemas in search" })),
+    server: Type.Optional(Type.String({ description: "Filter to specific server" })),
+  }),
+  async execute(...) { }
+})
+```
+
+**Approximate token cost:** 200 tokens (for unlimited tools)
+
+## Discovery Workflow
+
+The typical LLM interaction pattern:
+
+<Steps>
+  <Step title="User Request">
+    User: "Take a screenshot of the current page"
+  </Step>
+  
+  <Step title="Tool Search">
+    LLM: `mcp({ search: "screenshot" })`
+    
+    Response includes matching tools with full schemas.
+  </Step>
+  
+  <Step title="Tool Call">
+    LLM: `mcp({ tool: "chrome_devtools_take_screenshot", args: '{"format": "png"}' })`
+    
+    Screenshot is returned to the LLM.
+  </Step>
+</Steps>
+
+**Total overhead:** ~100-150 tokens for search + tool call
+
+**Traditional approach:** 280 tokens for the tool definition (burned on every request, whether used or not)
+
+## When to Use Direct Tools
+
+While the proxy pattern is highly efficient, there are cases where **direct tool registration** makes sense:
+
+### Small, Focused Tool Sets
+
+If you have 5-10 critical tools you use frequently:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "directTools": [
+        "search_repositories",
+        "get_file_contents",
+        "create_issue",
+        "create_pull_request"
+      ]
+    }
+  }
+}
+```
+
+**Token cost:** 4 tools × 200 tokens = ~800 tokens
+
+**Benefit:** LLM sees these tools immediately without search step
+
+### Frequently Used Tools
+
+For tools called dozens of times per session, the upfront token cost is amortized:
+
+- 20 tool calls via proxy: 20 × ~50 tokens (search) = 1,000 tokens
+- Direct tool (no search): 200 tokens upfront, 20 × 0 tokens = 200 tokens
+
+Direct tools win when called frequently.
+
+### Hybrid Approach
+
+Use both proxy and direct tools:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "directTools": ["search_repositories", "get_file_contents"],
+      "lifecycle": "lazy"
+    },
+    "chrome-devtools": {
+      "lifecycle": "lazy"
+    }
+  }
+}
+```
+
+- **github:** 2 direct tools (~400 tokens), 10 proxy tools
+- **chrome-devtools:** 26 proxy tools
+
+Total: ~600 tokens (proxy + 2 direct) vs ~6,000 tokens (all direct)
+
+## Direct Tool Efficiency
+
+Even direct tools are more efficient than traditional MCP integration:
+
+### Traditional MCP
+
+```typescript
+// Server must be connected at startup to discover tools
+await client.connect(transport)
+const { tools } = await client.listTools()
+
+// Register each tool with full schema
+for (const tool of tools) {
+  pi.registerTool({
+    name: tool.name,
+    description: tool.description,
+    parameters: convertSchema(tool.inputSchema),
+    async execute(...) { }
+  })
+}
+```
+
+**Startup time:** Connect all servers (slow)
+**Memory usage:** All servers running
+**Token cost:** All tools in context
+
+### Pi MCP Adapter Direct Tools
+
+```typescript
+// No connection needed - use cache
+const cache = loadMetadataCache()
+
+// Register only selected tools
+for (const spec of directSpecs) {
+  pi.registerTool({
+    name: spec.prefixedName,
+    description: spec.description,
+    parameters: Type.Unsafe(spec.inputSchema),
+    async execute(...) {
+      // Lazy connect when actually called
+    },
+  })
+}
+```
+
+**Startup time:** Instant (no connections)
+**Memory usage:** Servers start only when tools are called
+**Token cost:** Only selected tools in context
+
+## Real-World Comparison
+
+A typical setup with 3 MCP servers:
+
+| Metric | Traditional MCP | Pi MCP Adapter (Proxy) | Pi MCP Adapter (Hybrid) |
+|--------|-----------------|------------------------|-------------------------|
+| **Servers** | 3 | 3 | 3 |
+| **Total Tools** | 75 | 75 | 75 |
+| **Tools in Context** | 75 | 1 (proxy) | 1 (proxy) + 5 (direct) |
+| **Token Cost** | ~15,000 | ~200 | ~1,200 |
+| **Startup Connections** | 3 (all) | 0 (lazy) | 0 (lazy) |
+| **Startup Time** | 5-10s | Instant | Instant |
+| **Memory (idle)** | 3 servers running | 0 servers running | 0 servers running |
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Start with Proxy" icon="gateway">
+    Use proxy mode for all servers initially. Measure usage patterns.
+  </Card>
+  
+  <Card title="Promote Frequently Used" icon="star">
+    After a few sessions, promote 5-10 most-used tools to direct registration.
+  </Card>
+  
+  <Card title="Keep Large Servers Proxy-Only" icon="server">
+    Servers with 50+ tools should stay proxy-only unless you need a small subset.
+  </Card>
+  
+  <Card title="Monitor Token Usage" icon="chart-line">
+    Track token costs. If direct tools exceed 2,000 tokens, reconsider your selection.
+  </Card>
+</CardGroup>
+
+## Token Efficiency Formula
+
+When deciding between proxy and direct tools:
+
+```
+Break-even point = (Direct tool cost) / (Search cost per use)
+```
+
+Example:
+
+- Direct tool: 200 tokens upfront
+- Search cost: 50 tokens per use
+- Break-even: 200 / 50 = 4 uses
+
+If you call a tool more than 4 times per session, direct registration saves tokens.
+
+However, this doesn't account for:
+- Cognitive load (LLM must track more tools)
+- Context pollution (irrelevant tools occupy space)
+- Session-to-session variance (tools used heavily in one session may be unused in the next)
+
+In practice, **keep direct tools under 20** for optimal balance.

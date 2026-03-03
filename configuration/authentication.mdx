@@ -1,0 +1,366 @@
+---
+title: "Authentication"
+description: "Configure OAuth and bearer token authentication for HTTP-based MCP servers"
+---
+
+## Authentication Types
+
+Pi MCP Adapter supports two authentication methods for HTTP-based MCP servers:
+
+- **Bearer Token** - Static token passed in the `Authorization` header
+- **OAuth** - OAuth 2.0 flow with token storage and manual refresh
+
+## Bearer Token Authentication
+
+### Direct Token
+
+Provide the bearer token directly in the configuration:
+
+<ParamField path="auth" type="string" required>
+  Set to `"bearer"` to enable bearer token authentication
+</ParamField>
+
+<ParamField path="bearerToken" type="string">
+  The actual bearer token value
+</ParamField>
+
+```json
+{
+  "mcpServers": {
+    "api-server": {
+      "url": "https://api.example.com/mcp",
+      "auth": "bearer",
+      "bearerToken": "sk-1234567890abcdef"
+    }
+  }
+}
+```
+
+<Warning>
+  Storing tokens directly in config files is not recommended for production. Use environment variables instead.
+</Warning>
+
+### Environment Variable
+
+Reference an environment variable containing the token:
+
+<ParamField path="bearerTokenEnv" type="string">
+  Name of the environment variable containing the bearer token
+</ParamField>
+
+```json
+{
+  "mcpServers": {
+    "api-server": {
+      "url": "https://api.example.com/mcp",
+      "auth": "bearer",
+      "bearerTokenEnv": "API_TOKEN"
+    }
+  }
+}
+```
+
+Then set the environment variable before running Pi:
+
+```bash
+export API_TOKEN="sk-1234567890abcdef"
+pi
+```
+
+### How Bearer Tokens Work
+
+The adapter adds the token to every HTTP request:
+
+```http
+Authorization: Bearer sk-1234567890abcdef
+```
+
+## OAuth Authentication
+
+### Configuration
+
+<ParamField path="auth" type="string" required>
+  Set to `"oauth"` to enable OAuth authentication
+</ParamField>
+
+```json
+{
+  "mcpServers": {
+    "oauth-server": {
+      "url": "https://api.example.com/mcp",
+      "auth": "oauth"
+    }
+  }
+}
+```
+
+### OAuth Flow
+
+<Steps>
+  <Step title="Configure Server">
+    Add the server to your `mcp.json` with `"auth": "oauth"`
+  </Step>
+  
+  <Step title="Initiate OAuth">
+    Run the OAuth setup command:
+    ```bash
+    /mcp-auth <server-name>
+    ```
+  </Step>
+  
+  <Step title="Obtain Tokens Externally">
+    Pi MCP Adapter **does not provide a browser-based OAuth flow**. You must obtain tokens through the provider's OAuth process externally (e.g., via their web interface, CLI tool, or authorization endpoint).
+  </Step>
+  
+  <Step title="Store Tokens">
+    Manually create the token file at:
+    ```
+    ~/.pi/agent/mcp-oauth/<server-name>/tokens.json
+    ```
+  </Step>
+  
+  <Step title="Connect">
+    The adapter will read the stored tokens and use them for authentication:
+    ```bash
+    /mcp reconnect <server-name>
+    ```
+  </Step>
+</Steps>
+
+### Token Storage Format
+
+Tokens are stored in:
+
+```
+~/.pi/agent/mcp-oauth/<server-name>/tokens.json
+```
+
+**Required format:**
+
+```json
+{
+  "access_token": "ya29.a0AfH6SMBx...",
+  "token_type": "bearer",
+  "refresh_token": "1//0gHZ9K8vQz...",
+  "expires_in": 3600,
+  "expiresAt": 1234567890000
+}
+```
+
+<ParamField path="access_token" type="string" required>
+  The OAuth access token
+</ParamField>
+
+<ParamField path="token_type" type="string" default="bearer">
+  Token type (usually `"bearer"`)
+</ParamField>
+
+<ParamField path="refresh_token" type="string">
+  OAuth refresh token (optional, not currently used for automatic refresh)
+</ParamField>
+
+<ParamField path="expires_in" type="number">
+  Token lifetime in seconds (optional)
+</ParamField>
+
+<ParamField path="expiresAt" type="number">
+  Absolute expiration timestamp in milliseconds (optional). If set, the adapter checks expiration before using the token.
+</ParamField>
+
+### Token Expiration
+
+The adapter checks token expiration if `expiresAt` is present in the token file:
+
+```typescript
+if (Date.now() > expiresAt) {
+  // Token expired - server shows "needs-auth" status
+}
+```
+
+<Note>
+  **Automatic token refresh is not currently implemented.** When tokens expire, you must manually refresh them and update the `tokens.json` file.
+</Note>
+
+### Manual Token Refresh
+
+When your OAuth tokens expire:
+
+<Steps>
+  <Step title="Check Server Status">
+    Run `/mcp` to see which servers show "needs-auth" status
+  </Step>
+  
+  <Step title="Refresh Tokens Externally">
+    Use the provider's OAuth flow or CLI to obtain new tokens
+  </Step>
+  
+  <Step title="Update Token File">
+    Replace the contents of `~/.pi/agent/mcp-oauth/<server-name>/tokens.json` with the new tokens
+  </Step>
+  
+  <Step title="Reconnect">
+    ```bash
+    /mcp reconnect <server-name>
+    ```
+  </Step>
+</Steps>
+
+## Custom Headers
+
+For servers that require additional authentication headers beyond OAuth or bearer tokens:
+
+<ParamField path="headers" type="object">
+  Custom HTTP headers included in every request
+</ParamField>
+
+```json
+{
+  "mcpServers": {
+    "custom-server": {
+      "url": "https://api.example.com/mcp",
+      "headers": {
+        "X-API-Key": "${API_KEY}",
+        "X-Custom-Header": "value"
+      }
+    }
+  }
+}
+```
+
+<Note>
+  Header values support `${VAR}` environment variable interpolation, just like the `env` field.
+</Note>
+
+## Complete Examples
+
+<CodeGroup>
+
+```json Bearer Token (Env Var)
+{
+  "mcpServers": {
+    "github-api": {
+      "url": "https://api.github.com/mcp",
+      "auth": "bearer",
+      "bearerTokenEnv": "GITHUB_TOKEN",
+      "headers": {
+        "Accept": "application/vnd.github.v3+json"
+      }
+    }
+  }
+}
+```
+
+```json OAuth
+{
+  "mcpServers": {
+    "google-workspace": {
+      "url": "https://workspace.google.com/mcp",
+      "auth": "oauth",
+      "lifecycle": "keep-alive"
+    }
+  }
+}
+```
+
+```json Mixed Auth Methods
+{
+  "mcpServers": {
+    "service-a": {
+      "url": "https://service-a.example.com/mcp",
+      "auth": "bearer",
+      "bearerTokenEnv": "SERVICE_A_TOKEN"
+    },
+    "service-b": {
+      "url": "https://service-b.example.com/mcp",
+      "auth": "oauth"
+    },
+    "service-c": {
+      "url": "https://service-c.example.com/mcp",
+      "headers": {
+        "X-API-Key": "${SERVICE_C_KEY}"
+      }
+    }
+  }
+}
+```
+
+</CodeGroup>
+
+## Security Best Practices
+
+<Warning>
+  **Never commit tokens or API keys to version control.** Use environment variables or exclude `mcp.json` from git if it contains sensitive data.
+</Warning>
+
+### Recommendations
+
+1. **Use environment variables** for all tokens and keys:
+   ```json
+   {
+     "bearerTokenEnv": "API_TOKEN"
+   }
+   ```
+
+2. **Protect token storage directory**:
+   ```bash
+   chmod 700 ~/.pi/agent/mcp-oauth
+   chmod 600 ~/.pi/agent/mcp-oauth/*/tokens.json
+   ```
+
+3. **Rotate tokens regularly** even if they haven't expired
+
+4. **Use least-privilege tokens** with only the permissions needed for the MCP server
+
+5. **Monitor token expiration** and set up reminders to refresh before expiry
+
+## Troubleshooting
+
+### Server Shows "needs-auth" Status
+
+**OAuth servers:**
+- Check if `~/.pi/agent/mcp-oauth/<server>/tokens.json` exists
+- Verify the token file has valid JSON format
+- Check if `expiresAt` timestamp has passed
+- Refresh tokens and update the file
+
+**Bearer token servers:**
+- Verify the environment variable is set: `echo $API_TOKEN`
+- Check that the token value is correct
+- Ensure `bearerTokenEnv` matches the actual variable name
+
+### Token Validation Errors
+
+The adapter requires `access_token` to be present and non-empty:
+
+```json
+{
+  "access_token": "ya29.a0AfH6SMBx..."
+}
+```
+
+If missing or invalid, the server won't connect.
+
+### Automatic Refresh Not Working
+
+<Note>
+  **This is expected behavior.** Automatic token refresh is not currently implemented. You must manually refresh tokens when they expire.
+</Note>
+
+## Limitations
+
+- **No browser-based OAuth flow** - Tokens must be obtained externally
+- **No automatic token refresh** - Manual refresh required when tokens expire
+- **Refresh tokens are stored but not used** - Future feature
+- **No cross-session token sharing** - Each Pi session manages its own tokens
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Server Setup" icon="server" href="/configuration/server-setup">
+    Configure MCP servers with different transports
+  </Card>
+  
+  <Card title="Global Settings" icon="gear" href="/configuration/settings">
+    Set defaults for toolPrefix, idleTimeout, and directTools
+  </Card>
+</CardGroup>

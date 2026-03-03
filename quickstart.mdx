@@ -1,80 +1,445 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Get up and running with Pi MCP Adapter in 5 minutes
 ---
 
-## Get started in three steps
+## Create Your Configuration File
 
-Get your documentation site running locally and make your first customization.
+After installing Pi MCP Adapter, create a configuration file at `~/.pi/agent/mcp.json`:
 
-### Step 1: Set up your local environment
+```bash
+touch ~/.pi/agent/mcp.json
+```
+
+Open the file in your favorite editor and add your first MCP server:
+
+```json ~/.pi/agent/mcp.json
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"]
+    }
+  }
+}
+```
+
+<Info>
+  **Lazy by default**: Servers won't connect until you actually call one of their tools. The adapter caches tool metadata so search and describe work without live connections.
+</Info>
+
+## Discover Available Tools
+
+Now restart Pi and search for available tools:
+
+```bash
+mcp({ search: "screenshot" })
+```
+
+You'll see matching tools with their descriptions:
+
+```
+chrome_devtools_take_screenshot
+  Take a screenshot of the page or element.
+
+  Parameters:
+    format (enum: "png", "jpeg", "webp") [default: "png"]
+    fullPage (boolean) - Full page instead of viewport
+```
+
+## Call Your First Tool
+
+Call the tool using the proxy:
+
+```bash
+mcp({ tool: "chrome_devtools_take_screenshot", args: '{"format": "png"}' })
+```
+
+<Warning>
+  **Arguments are JSON strings**: The `args` parameter must be a JSON string, not a JavaScript object. Always use single quotes around the JSON and double quotes inside:
+  
+  ```bash
+  # Correct
+  args: '{"format": "png"}'
+  
+  # Wrong
+  args: {"format": "png"}
+  ```
+</Warning>
+
+The server will connect automatically on first use, execute the tool, and return the result.
+
+## Explore the MCP Tool
+
+The `mcp` tool supports multiple modes:
 
 <AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+  <Accordion title="Status - View all servers">
+    ```bash
+    mcp({})
+    ```
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
+    Shows connection status and tool counts for all configured servers:
+    
+    ```
+    MCP: 1/1 servers, 26 tools
+
+    ✓ chrome-devtools (26 tools)
+
+    mcp({ server: "name" }) to list tools, mcp({ search: "..." }) to search
+    ```
   </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+  
+  <Accordion title="List - Show all tools from a server">
+    ```bash
+    mcp({ server: "chrome-devtools" })
+    ```
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
+    Lists all available tools from the specified server:
+    
+    ```
+    chrome-devtools (26 tools):
+
+    - chrome_devtools_navigate - Navigate to a URL
+    - chrome_devtools_take_screenshot - Take a screenshot
+    - chrome_devtools_click - Click an element
+    ...
+    ```
+  </Accordion>
+  
+  <Accordion title="Search - Find tools by keyword">
+    ```bash
+    mcp({ search: "screenshot navigate" })
+    ```
+    
+    Searches across all tools using OR logic (space-separated words):
+    
+    ```
+    Found 3 tools matching "screenshot navigate":
+
+    chrome_devtools_take_screenshot
+      Take a screenshot of the page or element.
+      
+      Parameters:
+        format (enum: "png", "jpeg", "webp") [default: "png"]
+        fullPage (boolean) - Full page instead of viewport
+
+    chrome_devtools_navigate
+      Navigate to a URL.
+      
+      Parameters:
+        url (string) *required*
+    ```
+    
+    <Tip>
+      Use `includeSchemas: false` to get compact results without parameter details:
+      
+      ```bash
+      mcp({ search: "screenshot", includeSchemas: false })
+      ```
+    </Tip>
+  </Accordion>
+  
+  <Accordion title="Describe - View tool parameters">
+    ```bash
+    mcp({ describe: "chrome_devtools_take_screenshot" })
+    ```
+    
+    Shows detailed information about a specific tool:
+    
+    ```
+    chrome_devtools_take_screenshot
+    Server: chrome-devtools
+
+    Take a screenshot of the page or element.
+
+    Parameters:
+      format (enum: "png", "jpeg", "webp") [default: "png"]
+      fullPage (boolean) - Full page instead of viewport
+    ```
+  </Accordion>
+  
+  <Accordion title="Call - Execute a tool">
+    ```bash
+    mcp({ tool: "chrome_devtools_take_screenshot", args: '{"format": "png", "fullPage": true}' })
+    ```
+    
+    Calls the tool with the provided arguments and returns the result.
+    
+    You can optionally specify the server to disambiguate:
+    
+    ```bash
+    mcp({ tool: "some_tool", args: '{}', server: "chrome-devtools" })
+    ```
+  </Accordion>
+  
+  <Accordion title="Connect - Force server connection">
+    ```bash
+    mcp({ connect: "chrome-devtools" })
+    ```
+    
+    Manually connects to a server and refreshes its metadata cache. Useful for:
+    - Forcing immediate connection instead of waiting for first tool call
+    - Refreshing metadata after server updates
+    - Troubleshooting connection issues
   </Accordion>
 </AccordionGroup>
 
-### Step 2: Deploy your changes
+## Add More Servers
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+Expand your configuration to include multiple servers:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+```json ~/.pi/agent/mcp.json
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/directory"]
+    }
+  }
+}
+```
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  **Environment variable interpolation**: Use `${VAR_NAME}` syntax to reference environment variables from your shell. Pi MCP Adapter will automatically expand them.
 </Note>
+
+Restart Pi and all servers will be available:
+
+```bash
+mcp({})
+```
+
+```
+MCP: 0/3 servers, 75 tools
+
+○ chrome-devtools (26 tools, cached)
+○ github (32 tools, cached)
+○ filesystem (17 tools, cached)
+
+mcp({ server: "name" }) to list tools, mcp({ search: "..." }) to search
+```
+
+Servers show as cached because they haven't connected yet. They'll connect automatically when you use their tools.
+
+## Interactive Management Panel
+
+Pi MCP Adapter includes an interactive management panel. Run:
+
+```bash
+/mcp
+```
+
+This opens a UI overlay showing:
+- Server connection status
+- Available tools per server
+- Direct vs. proxy tool configuration
+- Quick actions (reconnect, OAuth setup)
+
+You can toggle tools between direct and proxy registration and the changes will be written to your config file.
+
+<Tip>
+  Use `/mcp reconnect` to reconnect all servers or `/mcp reconnect <server-name>` for a specific server.
+</Tip>
+
+## Import Existing Configurations
+
+If you already have MCP servers configured in other tools, import them:
+
+```json ~/.pi/agent/mcp.json
+{
+  "imports": ["cursor", "claude-desktop"],
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"]
+    }
+  }
+}
+```
+
+Supported import sources:
+- `cursor` - Cursor IDE
+- `claude-code` - Claude Code
+- `claude-desktop` - Claude Desktop app
+- `vscode` - Visual Studio Code
+- `windsurf` - Windsurf
+- `codex` - Codex
+
+Servers defined in `mcpServers` override imported configurations.
+
+## Use Direct Tool Registration
+
+By default, all tools are accessed through the `mcp` proxy. For frequently-used tools, you can register them directly so the LLM sees them alongside Pi's built-in tools:
+
+```json ~/.pi/agent/mcp.json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "directTools": ["search_repositories", "get_file_contents"]
+    }
+  }
+}
+```
+
+Now `search_repositories` and `get_file_contents` appear as first-class tools. The LLM can call them directly without searching.
+
+<CodeGroup>
+```bash Before (proxy)
+mcp({ search: "search repo" })
+mcp({ tool: "github_search_repositories", args: '{...}' })
+```
+
+```bash After (direct)
+// Tool is already available, LLM can call it directly
+github_search_repositories({...})
+```
+</CodeGroup>
+
+<Warning>
+  **Context cost**: Each direct tool adds ~150-300 tokens to your system prompt. Good for targeted sets of 5-20 tools. For servers with 75+ tools, stick with the proxy.
+</Warning>
+
+You can also register all tools from a server:
+
+```json
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"],
+      "directTools": true
+    }
+  }
+}
+```
+
+## Project-Specific Configuration
+
+Add a `.pi/mcp.json` file in any project root for project-specific servers:
+
+```bash project-root/.pi/mcp.json
+{
+  "mcpServers": {
+    "project-database": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "env": {
+        "DATABASE_URL": "postgresql://localhost/myproject"
+      }
+    }
+  }
+}
+```
+
+Project configs override global configs when Pi is run from that directory.
+
+## Understanding Lifecycle Modes
+
+Pi MCP Adapter supports three lifecycle modes:
+
+<CardGroup cols={3}>
+  <Card title="Lazy (default)" icon="hourglass">
+    - Don't connect at startup
+    - Connect on first tool call
+    - Disconnect after idle timeout
+    - Cached metadata keeps search working
+    
+    **Best for**: Most servers, especially resource-intensive ones
+  </Card>
+  
+  <Card title="Eager" icon="forward">
+    - Connect at startup
+    - Don't auto-reconnect if dropped
+    - No idle timeout by default
+    
+    **Best for**: Servers you use frequently in a session
+  </Card>
+  
+  <Card title="Keep-Alive" icon="heart-pulse">
+    - Connect at startup
+    - Auto-reconnect via health checks
+    - No idle timeout
+    
+    **Best for**: Critical servers that must always be available
+  </Card>
+</CardGroup>
+
+Example configuration:
+
+```json ~/.pi/agent/mcp.json
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"],
+      "lifecycle": "lazy",
+      "idleTimeout": 10
+    },
+    "database": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "lifecycle": "keep-alive",
+      "env": {
+        "DATABASE_URL": "${DATABASE_URL}"
+      }
+    }
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card 
+    title="Configuration Guide" 
+    icon="gear" 
+    href="/configuration"
+  >
+    Learn about all available configuration options, transport modes, authentication, and advanced settings
+  </Card>
+  
+  <Card 
+    title="Available Commands" 
+    icon="terminal" 
+    href="/commands"
+  >
+    Explore all `/mcp` commands for managing servers, viewing tools, and handling OAuth
+  </Card>
+  
+  <Card 
+    title="Lifecycle Management" 
+    icon="rotate" 
+    href="/lifecycle"
+  >
+    Deep dive into server lifecycle modes, idle timeouts, and connection management
+  </Card>
+  
+  <Card 
+    title="Troubleshooting" 
+    icon="wrench" 
+    href="/troubleshooting"
+  >
+    Common issues and solutions for server connections, tool calls, and configuration
+  </Card>
+</CardGroup>
+
+<Tip>
+  **Pro tip**: Start with lazy lifecycle and proxy-only tools. Add direct tools and change lifecycle modes as you identify your usage patterns.
+</Tip>

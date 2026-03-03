@@ -1,0 +1,333 @@
+---
+title: Lifecycle Modes
+description: Understanding lazy, eager, and keep-alive lifecycle modes for MCP servers
+---
+
+## Overview
+
+Pi MCP Adapter provides three lifecycle modes that control when servers connect, how long they stay connected, and whether they auto-reconnect. Each mode is designed for different use cases.
+
+## Lifecycle Modes
+
+### Lazy Mode (Default)
+
+**Behavior:**
+- Don't connect at startup
+- Connect on first tool call
+- Disconnect after idle timeout (default: 10 minutes)
+- Reconnect automatically on next tool call
+
+**Configuration:**
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "npx",
+      "args": ["-y", "some-mcp-server"],
+      "lifecycle": "lazy"  // This is the default
+    }
+  }
+}
+```
+
+**When to use:**
+- Servers you use occasionally
+- Servers with high startup cost that you want to keep idle
+- Servers you don't need immediately at session start
+
+**Implementation:**
+
+When a tool is called on a lazy server:
+
+```typescript
+const connected = await lazyConnect(state, serverName)
+if (!connected) {
+  const failedAgo = getFailureAgeSeconds(state, serverName)
+  return {
+    content: [{ 
+      type: "text", 
+      text: `Server "${serverName}" not available${failedAgo !== null ? ` (failed ${failedAgo}s ago)` : ""}` 
+    }],
+    details: { error: "server_unavailable", server: serverName },
+  }
+}
+```
+
+The `lazyConnect` function checks if the server is in failure backoff (default: 60 seconds) before attempting connection.
+
+<Note>
+Lazy servers rely on the metadata cache for search/list/describe operations. The cache enables these features to work even when the server isn't connected.
+</Note>
+
+### Eager Mode
+
+**Behavior:**
+- Connect at startup (during session initialization)
+- Don't auto-reconnect if connection drops
+- **No idle timeout by default** (set `idleTimeout` explicitly to enable)
+- Useful for getting metadata into cache quickly
+
+**Configuration:**
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "npx",
+      "args": ["-y", "some-mcp-server"],
+      "lifecycle": "eager",
+      "idleTimeout": 5  // Optional: disconnect after 5 minutes of inactivity
+    }
+  }
+}
+```
+
+**When to use:**
+- You want tools available immediately at session start
+- You don't need the server to stay connected permanently
+- You want to populate the metadata cache on first run
+- You're okay with manual reconnection if the server crashes
+
+**Implementation:**
+
+During initialization, eager servers are included in the startup connection pool:
+
+```typescript
+const startupServers = bootstrapAll
+  ? serverEntries
+  : serverEntries.filter(([, definition]) => {
+      const mode = definition.lifecycle ?? "lazy"
+      return mode === "keep-alive" || mode === "eager"
+    })
+
+// Connect selected servers in parallel (max 10 concurrent)
+const results = await parallelLimit(startupServers, 10, async ([name, definition]) => {
+  try {
+    const connection = await manager.connect(name, definition)
+    return { name, definition, connection, error: null }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { name, definition, connection: null, error: message }
+  }
+})
+```
+
+<Info>
+Eager mode sets `idleTimeout` to **0 by default** (no auto-disconnect). This differs from lazy mode, which uses the global 10-minute timeout. Set `idleTimeout` explicitly if you want eager servers to disconnect when idle.
+</Info>
+
+### Keep-Alive Mode
+
+**Behavior:**
+- Connect at startup
+- Auto-reconnect via health checks (every 30 seconds)
+- Never disconnect due to idle timeout
+- Best for servers you always need available
+
+**Configuration:**
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "npx",
+      "args": ["-y", "critical-mcp-server"],
+      "lifecycle": "keep-alive"
+    }
+  }
+}
+```
+
+**When to use:**
+- Critical servers that should always be available
+- Servers where connection time is expensive
+- Servers you use frequently throughout the session
+- Databases, browsers, or stateful services
+
+**Implementation:**
+
+Keep-alive servers are registered in a separate tracking map:
+
+```typescript
+markKeepAlive(name: string, definition: ServerDefinition): void {
+  this.keepAliveServers.set(name, definition)
+}
+```
+
+The health check runs every 30 seconds and attempts reconnection:
+
+```typescript
+private async checkConnections(): Promise<void> {
+  // Reconnect keep-alive servers
+  for (const [name, definition] of this.keepAliveServers) {
+    const connection = this.manager.getConnection(name)
+    
+    if (!connection || connection.status !== "connected") {
+      try {
+        await this.manager.connect(name, definition)
+        console.log(`MCP: Reconnected to ${name}`)
+        this.onReconnect?.(name)  // Update metadata cache
+      } catch (error) {
+        console.error(`MCP: Failed to reconnect to ${name}:`, error)
+      }
+    }
+  }
+
+  // Shutdown idle non-keep-alive servers
+  for (const [name] of this.allServers) {
+    if (this.keepAliveServers.has(name)) continue  // Skip keep-alive
+    const timeout = this.getIdleTimeout(name)
+    if (timeout > 0 && this.manager.isIdle(name, timeout)) {
+      await this.manager.close(name)
+      this.onIdleShutdown?.(name)
+    }
+  }
+}
+```
+
+<Warning>
+Keep-alive servers are **never** subject to idle timeout, even if you set `idleTimeout` in the config. The setting is ignored for keep-alive mode.
+</Warning>
+
+## Idle Timeout Configuration
+
+You can configure idle timeouts globally or per-server:
+
+### Global Timeout
+
+```json
+{
+  "settings": {
+    "idleTimeout": 10  // Minutes (default)
+  },
+  "mcpServers": { }
+}
+```
+
+### Per-Server Override
+
+```json
+{
+  "mcpServers": {
+    "fast-server": {
+      "command": "node",
+      "args": ["./server.js"],
+      "lifecycle": "lazy",
+      "idleTimeout": 2  // Disconnect after 2 minutes
+    },
+    "slow-server": {
+      "command": "npx",
+      "args": ["-y", "heavy-mcp-server"],
+      "lifecycle": "lazy",
+      "idleTimeout": 30  // Keep alive for 30 minutes
+    }
+  }
+}
+```
+
+Per-server `idleTimeout` always overrides the global setting.
+
+### How Idle Detection Works
+
+A server is considered idle when:
+
+1. **No active requests** - `inFlight === 0`
+2. **Enough time has passed** - `Date.now() - lastUsedAt > timeoutMs`
+
+```typescript
+isIdle(name: string, timeoutMs: number): boolean {
+  const connection = this.connections.get(name)
+  if (!connection || connection.status !== "connected") return false
+  if (connection.inFlight && connection.inFlight > 0) return false
+  return (Date.now() - connection.lastUsedAt) > timeoutMs
+}
+```
+
+Every tool call updates the `lastUsedAt` timestamp:
+
+```typescript
+try {
+  state.manager.touch(serverName)           // Update lastUsedAt
+  state.manager.incrementInFlight(serverName)
+  
+  // Call the tool...
+  
+} finally {
+  state.manager.decrementInFlight(serverName)
+  state.manager.touch(serverName)           // Update again after completion
+}
+```
+
+<Tip>
+Setting `idleTimeout: 0` disables idle disconnect for that server (but it's not the same as keep-alive mode, which also adds auto-reconnect).
+</Tip>
+
+## Lifecycle Mode Comparison
+
+| Feature | Lazy | Eager | Keep-Alive |
+|---------|------|-------|------------|
+| Connect at startup | ✗ | ✓ | ✓ |
+| Auto-reconnect | ✗ | ✗ | ✓ |
+| Default idle timeout | 10 min | None (0) | None (ignored) |
+| Cache-only operation | ✓ | ✓ | ✗ |
+| Health checks | ✗ | ✗ | ✓ |
+| Use case | Occasional use | Quick start | Always available |
+
+## Health Check Internals
+
+The lifecycle manager starts health checks in the background:
+
+```typescript
+startHealthChecks(intervalMs = 30000): void {
+  this.healthCheckInterval = setInterval(() => {
+    this.checkConnections()
+  }, intervalMs)
+  this.healthCheckInterval.unref()  // Don't block process exit
+}
+```
+
+The `unref()` call is important - it allows Pi to shut down gracefully even if the health check timer is still running.
+
+### Reconnect Callback
+
+When a keep-alive server reconnects, the adapter needs to update its tool metadata:
+
+```typescript
+lifecycle.setReconnectCallback((serverName) => {
+  updateServerMetadata(state, serverName)
+  updateMetadataCache(state, serverName)
+  state.failureTracker.delete(serverName)
+  updateStatusBar(state)
+})
+```
+
+This ensures the cache stays in sync with the actual server state.
+
+## Choosing the Right Mode
+
+<CardGroup cols={3}>
+  <Card title="Lazy" icon="clock">
+    Use for most servers. Connects on-demand, disconnects when idle. Minimal resource usage.
+  </Card>
+  
+  <Card title="Eager" icon="bolt">
+    Use when you want tools available immediately but don't need persistent connection.
+  </Card>
+  
+  <Card title="Keep-Alive" icon="heart">
+    Use for critical servers (database, browser, etc.) that should always be connected.
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+1. **Start with lazy mode** for all servers, then promote specific servers to eager/keep-alive based on usage patterns
+
+2. **Use keep-alive sparingly** - each keep-alive server runs continuously, consuming memory and file descriptors
+
+3. **Set appropriate idle timeouts** - short timeouts (2-5 min) for fast-starting servers, longer timeouts (30+ min) for slow-starting servers
+
+4. **Monitor health check logs** - if you see frequent reconnection attempts, your server might be unstable
+
+5. **Use eager mode for first run** - populate the metadata cache, then switch to lazy for subsequent sessions

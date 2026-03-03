@@ -1,0 +1,349 @@
+---
+title: "Direct Tools"
+description: "Register specific MCP tools directly with Pi for immediate LLM access"
+---
+
+By default, all MCP tools are accessed through the `mcp()` proxy tool. This keeps your context window small but requires the LLM to discover tools through search. For tools you use frequently, you can register them **directly** with Pi so they appear alongside built-in tools like `read`, `bash`, and `edit`.
+
+## When to use direct tools
+
+Direct tools are ideal for:
+
+- **Frequently used tools** - Tools the LLM should always consider (e.g., `github_search_repositories`)
+- **Core workflows** - Essential tools for your project (e.g., `postgres_query` for a database project)
+- **Small tool sets** - 5-20 tools that form a cohesive capability
+
+<Warning>
+**Context cost:** Each direct tool adds ~150-300 tokens to the system prompt (name + description + parameter schema). Use selectively.
+</Warning>
+
+## Avoid direct tools when:
+
+- Server has 75+ tools (use the proxy or pick specific tools)
+- Tools are rarely needed
+- You want to minimize context usage
+- LLM discovery through search is acceptable
+
+## Configuration
+
+Direct tools are configured in your MCP config file (`~/.pi/agent/mcp.json` or project `.pi/mcp.json`).
+
+<Tabs>
+  <Tab title="All tools from a server">
+    Register every tool from a specific server:
+
+    ```json
+    {
+      "mcpServers": {
+        "chrome-devtools": {
+          "command": "npx",
+          "args": ["-y", "chrome-devtools-mcp@latest"],
+          "directTools": true
+        }
+      }
+    }
+    ```
+
+    **Effect:** All 26 tools from `chrome-devtools` become first-class Pi tools:
+    - `chrome_devtools_navigate`
+    - `chrome_devtools_screenshot`
+    - `chrome_devtools_click`
+    - etc.
+
+    <Info>
+    Still accessible via proxy: Direct tools can also be called through `mcp()` for consistency.
+    </Info>
+  </Tab>
+
+  <Tab title="Specific tools">
+    Register only selected tools from a server:
+
+    ```json
+    {
+      "mcpServers": {
+        "github": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-github"],
+          "env": {
+            "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+          },
+          "directTools": [
+            "search_repositories",
+            "get_file_contents",
+            "create_or_update_file"
+          ]
+        }
+      }
+    }
+    ```
+
+    **Effect:** Only the listed tools are registered directly. Other tools remain proxy-only.
+
+    <Note>
+    Use **original MCP names** (without server prefix) in the array. The adapter adds the prefix automatically.
+    </Note>
+  </Tab>
+
+  <Tab title="Global default">
+    Set a default for all servers, then override per-server:
+
+    ```json
+    {
+      "settings": {
+        "directTools": true
+      },
+      "mcpServers": {
+        "chrome-devtools": {
+          "command": "npx",
+          "args": ["-y", "chrome-devtools-mcp@latest"]
+          // Inherits directTools: true from settings
+        },
+        "huge-server": {
+          "command": "npx",
+          "args": ["-y", "mega-mcp@latest"],
+          "directTools": false  // Override: proxy only
+        }
+      }
+    }
+    ```
+
+    **Effect:** All servers use direct tools except `huge-server`.
+  </Tab>
+
+  <Tab title="Disabled (default)">
+    Proxy-only mode (no direct tools):
+
+    ```json
+    {
+      "mcpServers": {
+        "chrome-devtools": {
+          "command": "npx",
+          "args": ["-y", "chrome-devtools-mcp@latest"]
+          // No directTools field = proxy only
+        }
+      }
+    }
+    ```
+
+    Or explicitly disabled:
+
+    ```json
+    {
+      "mcpServers": {
+        "chrome-devtools": {
+          "command": "npx",
+          "args": ["-y", "chrome-devtools-mcp@latest"],
+          "directTools": false
+        }
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Interactive configuration
+
+Instead of editing JSON manually, use the interactive panel:
+
+<Steps>
+  <Step title="Open the panel">
+    Run the command:
+    ```bash
+    /mcp
+    ```
+  </Step>
+
+  <Step title="Toggle tools">
+    The panel shows all servers with:
+    - Connection status
+    - Tool counts
+    - Direct/Proxy toggles for each tool
+
+    Toggle individual tools or entire servers between direct and proxy mode.
+  </Step>
+
+  <Step title="Save changes">
+    Changes are written to your config file automatically.
+  </Step>
+
+  <Step title="Restart Pi">
+    Direct tools register at startup, so restart Pi to apply changes:
+    ```bash
+    # Exit and restart Pi
+    ```
+  </Step>
+</Steps>
+
+<Info>
+The `/mcp` panel also lets you reconnect servers, initiate OAuth, and view detailed server info.
+</Info>
+
+## How direct tools work
+
+### Registration from cache
+
+Direct tools register from the **metadata cache** (`~/.pi/agent/mcp-cache.json`), not live connections. This means:
+
+- No server connections at Pi startup
+- Instant registration (milliseconds)
+- Works even if servers are offline
+
+**First-time setup:** On your first session after adding `directTools` to a new server, the cache won't exist yet. Tools will fall back to proxy-only mode and the cache populates in the background. **Restart Pi** and direct tools will be available.
+
+**Force cache update:** Use `/mcp reconnect <server>` then restart Pi.
+
+### Tool naming
+
+Direct tools follow the same naming rules as proxy tools:
+
+```json
+{
+  "settings": {
+    "toolPrefix": "server"  // or "short" or "none"
+  }
+}
+```
+
+| Prefix Mode | Tool Name |
+|-------------|----------|
+| `server` (default) | `chrome_devtools_screenshot` |
+| `short` | `chrome_screenshot` (strips `-mcp` suffix) |
+| `none` | `screenshot` |
+
+<Warning>
+**Name collisions:** If a direct tool name conflicts with a built-in Pi tool (like `read`, `bash`, `mcp`), the MCP tool is skipped and a warning is logged. Use prefixes to avoid this.
+</Warning>
+
+### Duplicate names across servers
+
+If two servers have tools with the same name (after prefixing):
+
+- First tool wins
+- Second tool is skipped
+- Warning logged: `MCP: skipping duplicate direct tool "github_search" from "gitlab"`
+
+Solution: Use `toolPrefix: "server"` mode to namespace tools by server name.
+
+## Resource tools
+
+MCP resources are exposed as `get_*` tools and can be registered directly:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "mcp-server-filesystem",
+      "directTools": [
+        "read_file",
+        "get_documents_readme_md"  // Resource tool
+      ]
+    }
+  }
+}
+```
+
+To exclude resource tools:
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "mcp-server-filesystem",
+      "exposeResources": false,
+      "directTools": true
+    }
+  }
+}
+```
+
+## Environment override
+
+For testing or temporary changes, override direct tools via environment variable:
+
+```bash
+# Enable all tools from specific servers
+MCP_DIRECT_TOOLS=chrome-devtools,github pi
+
+# Enable specific tools only
+MCP_DIRECT_TOOLS=github/search_repositories,github/get_file_contents pi
+
+# Disable all direct tools (proxy only)
+MCP_DIRECT_TOOLS=__none__ pi
+```
+
+**Syntax:**
+- `server-name` - All tools from that server
+- `server-name/tool-name` - Specific tool from server
+- Comma-separated list for multiple
+- `__none__` to disable all direct tools
+
+<Note>
+Environment override is temporary and doesn't modify your config file.
+</Note>
+
+## Performance considerations
+
+### Context window impact
+
+Each direct tool adds to your system prompt:
+
+| Tool Count | Approximate Tokens |
+|------------|-------------------|
+| 5 tools | ~1,000 tokens |
+| 20 tools | ~4,000 tokens |
+| 50 tools | ~10,000 tokens |
+| 100 tools | ~20,000 tokens |
+
+For comparison:
+- `mcp()` proxy tool: ~200 tokens
+- Pi built-in tools: ~2,000 tokens total
+
+<Warning>
+With 100+ direct tools, you've consumed ~20% of a 128k context window before the conversation starts. Use selectively.
+</Warning>
+
+### When to use each approach
+
+| Scenario | Recommendation |
+|----------|---------------|
+| 1-2 frequently used tools | Direct tools |
+| 5-20 related tools | Direct tools (good for focused workflows) |
+| 50+ tools, use 5 regularly | Direct array: `["tool1", "tool2", ...]` |
+| 75+ tools, explore occasionally | Proxy only |
+| Mixed: some frequent, some rare | Hybrid: direct for key tools, proxy for rest |
+
+## Validation
+
+After configuring direct tools, verify registration:
+
+```bash
+# List all available tools (including direct MCP tools)
+/mcp tools
+```
+
+Or search within Pi:
+```javascript
+mcp({ search: "chrome" })
+// Direct tools appear WITHOUT [pi tool] prefix (they're MCP tools)
+```
+
+## Subagent integration
+
+If you use the Pi subagent extension, agents can request direct tools in their frontmatter:
+
+```yaml
+---
+tools:
+  - mcp:chrome-devtools
+  - mcp:github/search_repositories
+  - mcp:github/get_file_contents
+---
+```
+
+This dynamically registers tools for that agent only, without polluting the global context. See the subagent extension README for details.
+
+<Note>
+**Next steps:**
+- Learn about the [mcp() proxy tool](/usage/tool-proxy)
+- Explore [search capabilities](/usage/search)
+- Use [commands](/usage/commands) to manage servers
+</Note>

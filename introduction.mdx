@@ -1,0 +1,139 @@
+---
+title: Introduction
+description: Use MCP servers with Pi without burning your context window
+---
+
+<Frame>
+  <img src="/images/banner.png" alt="Pi MCP Adapter" />
+</Frame>
+
+## Welcome to Pi MCP Adapter
+
+Pi MCP Adapter enables you to use [MCP servers](https://modelcontextprotocol.io) with [Pi](https://github.com/badlogic/pi-mono/) without sacrificing your context window. Instead of loading hundreds of tool definitions upfront, you get a single proxy tool (~200 tokens) that discovers and calls tools on-demand.
+
+## The Problem
+
+MCP tool definitions are verbose. A single MCP server can burn 10,000+ tokens, and you're paying that cost whether you use those tools or not. Connect a few servers and you've burned half your context window before the conversation starts.
+
+Mario Zechner wrote about [why you might not need MCP](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/), suggesting simple CLI tools instead. But the MCP ecosystem has valuable integrations—databases, browsers, APIs. This adapter gives you access without the bloat.
+
+## The Solution
+
+**One proxy tool (~200 tokens) instead of hundreds.** The agent discovers what it needs on-demand. Servers only start when you actually use them.
+
+<CodeGroup>
+```bash Search for tools
+mcp({ search: "screenshot" })
+```
+
+```bash Call a tool
+mcp({ tool: "chrome_devtools_take_screenshot", args: '{"format": "png"}' })
+```
+</CodeGroup>
+
+Two calls instead of 26 tools cluttering the context.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Token-Efficient Proxy" icon="memory">
+    Single ~200 token proxy tool instead of 10k+ tokens for direct tool registration. Your context window stays clean.
+  </Card>
+  
+  <Card title="Lazy Server Lifecycle" icon="bolt">
+    Servers don't connect until you actually call their tools. Automatic idle timeout disconnects unused servers.
+  </Card>
+  
+  <Card title="Metadata Caching" icon="database">
+    Tool discovery works offline. Search and describe tools without live server connections.
+  </Card>
+  
+  <Card title="Direct Tool Registration" icon="wand-magic-sparkles">
+    Optionally register frequently-used tools directly for instant LLM access—no search required.
+  </Card>
+  
+  <Card title="Flexible Authentication" icon="key">
+    Support for OAuth and bearer token authentication for secure server connections.
+  </Card>
+  
+  <Card title="Multiple Transports" icon="network-wired">
+    HTTP and stdio transport with automatic fallback. Works with any MCP-compliant server.
+  </Card>
+  
+  <Card title="Interactive Management" icon="sliders">
+    Built-in management panel for server status, tool toggles, and OAuth setup.
+  </Card>
+  
+  <Card title="Config Import" icon="file-import">
+    Import existing configs from Cursor, Claude Desktop, VS Code, Windsurf, and Codex.
+  </Card>
+</CardGroup>
+
+## Quick Links
+
+<CardGroup cols={2}>
+  <Card 
+    title="Installation" 
+    icon="download" 
+    href="/installation"
+  >
+    Get started with Pi MCP Adapter in under a minute
+  </Card>
+  
+  <Card 
+    title="Quick Start" 
+    icon="rocket" 
+    href="/quickstart"
+  >
+    Configure your first server and start using MCP tools
+  </Card>
+  
+  <Card 
+    title="Configuration" 
+    icon="gear" 
+    href="/configuration"
+  >
+    Deep dive into server options, lifecycle modes, and settings
+  </Card>
+  
+  <Card 
+    title="GitHub Repository" 
+    icon="github" 
+    href="https://github.com/nicobailon/pi-mcp-adapter"
+  >
+    View the source code and contribute to the project
+  </Card>
+</CardGroup>
+
+## How It Works
+
+Under the hood, Pi MCP Adapter:
+
+- Registers a single `mcp` tool in your context (~200 tokens)
+- Keeps servers lazy by default—they connect on first tool call, not at startup
+- Caches tool metadata to disk so search/list/describe work without live connections
+- Disconnects idle servers after 10 minutes (configurable)
+- Resolves npx-based servers to direct binary paths, skipping the ~143 MB npm parent process
+- Validates arguments at the MCP server level, not in the adapter
+- Provides health checks and auto-reconnect for keep-alive servers
+- Promotes specific tools from proxy to first-class Pi tools via `directTools` config
+
+<Info>
+  **Context Window Savings**: With traditional MCP integration, 3-4 servers could consume 30k+ tokens just for tool definitions. With Pi MCP Adapter, you use ~200 tokens regardless of how many servers you connect.
+</Info>
+
+## Next Steps
+
+<Steps>
+  <Step title="Install the adapter">
+    Follow the [installation guide](/installation) to add Pi MCP Adapter to your Pi setup.
+  </Step>
+  
+  <Step title="Configure your servers">
+    Create your `mcp.json` config file and add MCP servers using the [quick start guide](/quickstart).
+  </Step>
+  
+  <Step title="Start using tools">
+    Search for tools, call them through the proxy, or register direct tools for instant access.
+  </Step>
+</Steps>

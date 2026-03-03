@@ -1,0 +1,223 @@
+---
+title: "/mcp-auth Command"
+description: "OAuth authentication reference for MCP servers"
+---
+
+## Overview
+
+The `/mcp-auth` command manages OAuth authentication for MCP servers. It displays setup instructions and token status for servers configured with `auth: "oauth"`.
+
+## Command Signature
+
+```bash
+/mcp-auth <server-name>
+```
+
+## Arguments
+
+<ParamField path="server-name" type="string" required>
+  The name of the MCP server to authenticate (must match a key in `mcpServers` config).
+</ParamField>
+
+## Usage
+
+```bash
+/mcp-auth github
+/mcp-auth slack
+```
+
+## Authentication Flow
+
+Pi MCP Adapter uses **file-based token storage** for OAuth. Tokens are obtained externally and stored in the expected location.
+
+### Steps
+
+1. **Run the command:**
+   ```bash
+   /mcp-auth <server-name>
+   ```
+
+2. **Follow server-specific instructions:**
+   The command displays the OAuth setup process for the server (usually involves visiting a URL, authorizing the app, and obtaining a token).
+
+3. **Store the token:**
+   Save the token to the file path specified by the server. Typically:
+   ```
+   ~/.pi/agent/mcp-tokens/<server-name>.json
+   ```
+
+4. **Reconnect the server:**
+   ```bash
+   /mcp reconnect <server-name>
+   ```
+
+### Token File Format
+
+Most MCP servers expect tokens in this format:
+
+```json
+{
+  "access_token": "your-token-here",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "refresh_token": "optional-refresh-token"
+}
+```
+
+Check your server's documentation for the exact format.
+
+## Server Configuration
+
+To enable OAuth for a server, set `auth: "oauth"` in your `mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "url": "https://mcp.github.com",
+      "auth": "oauth"
+    }
+  }
+}
+```
+
+## Token Storage Location
+
+Tokens are stored in:
+
+```
+~/.pi/agent/mcp-tokens/<server-name>.json
+```
+
+The adapter reads tokens from this location when connecting to OAuth-enabled servers.
+
+## Checking Token Status
+
+Run `/mcp-auth <server>` to see:
+- Whether a token file exists
+- Token expiration status (if applicable)
+- Setup instructions if no token is found
+
+## Limitations
+
+<Warning>
+  The Pi MCP Adapter does **not** provide an automatic OAuth browser flow. Tokens must be obtained manually using the server's authentication process.
+</Warning>
+
+### Current Limitations
+
+- **No browser flow** - No automatic redirect or token exchange
+- **No token refresh** - Expired tokens must be manually renewed
+- **Manual token files** - You must create and update token files yourself
+
+These limitations keep the adapter simple and avoid complex OAuth client implementations. Most MCP servers provide CLI tools or web interfaces to obtain tokens.
+
+## Bearer Token Alternative
+
+If a server supports static bearer tokens instead of OAuth, use the `bearerToken` or `bearerTokenEnv` fields instead:
+
+```json
+{
+  "mcpServers": {
+    "api-server": {
+      "url": "https://api.example.com",
+      "auth": "bearer",
+      "bearerTokenEnv": "API_SERVER_TOKEN"
+    }
+  }
+}
+```
+
+See [Server Options](/api/server-options) for authentication configuration details.
+
+## Examples
+
+### GitHub MCP Server
+
+1. **Configure the server:**
+   ```json
+   {
+     "mcpServers": {
+       "github": {
+         "url": "https://mcp.github.com",
+         "auth": "oauth"
+       }
+     }
+   }
+   ```
+
+2. **Run the auth command:**
+   ```bash
+   /mcp-auth github
+   ```
+
+3. **Follow the instructions** to obtain a GitHub personal access token
+
+4. **Save the token:**
+   ```bash
+   echo '{"access_token": "ghp_..."}' > ~/.pi/agent/mcp-tokens/github.json
+   ```
+
+5. **Reconnect:**
+   ```bash
+   /mcp reconnect github
+   ```
+
+### Slack MCP Server
+
+1. **Configure the server:**
+   ```json
+   {
+     "mcpServers": {
+       "slack": {
+         "url": "https://mcp.slack.com",
+         "auth": "oauth"
+       }
+     }
+   }
+   ```
+
+2. **Run the auth command:**
+   ```bash
+   /mcp-auth slack
+   ```
+
+3. **Obtain token from Slack's OAuth flow**
+
+4. **Save the token:**
+   ```bash
+   echo '{"access_token": "xoxb-..."}' > ~/.pi/agent/mcp-tokens/slack.json
+   ```
+
+5. **Reconnect:**
+   ```bash
+   /mcp reconnect slack
+   ```
+
+## Error Messages
+
+### Server Not Found
+
+```
+Usage: /mcp-auth <server-name>
+```
+
+You must provide a server name argument.
+
+### Invalid Server Name
+
+```
+Server "unknown" not found in config
+```
+
+The server name doesn't exist in your `mcp.json` configuration.
+
+### Not an OAuth Server
+
+If the server doesn't have `auth: "oauth"` configured, the command may still display generic instructions, but authentication won't be used.
+
+## Related
+
+- [/mcp Command](/api/mcp-command) - Manage MCP servers
+- [Server Options](/api/server-options) - Configure authentication
+- [OAuth Token Format](#token-file-format) - Token file structure

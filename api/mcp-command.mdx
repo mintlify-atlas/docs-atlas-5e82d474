@@ -1,0 +1,234 @@
+---
+title: "/mcp Command"
+description: "Reference for the /mcp command and its subcommands for managing MCP servers"
+---
+
+## Overview
+
+The `/mcp` command provides interactive and CLI access to MCP server management. It offers multiple subcommands for viewing status, listing tools, and reconnecting servers.
+
+## Command Signature
+
+```bash
+/mcp [subcommand] [args]
+```
+
+## Subcommands
+
+### `/mcp` (No Arguments)
+
+Opens an interactive panel showing server status, tools, and configuration options.
+
+**UI Mode (when terminal UI is available):**
+
+Launches a full-screen TUI overlay with:
+- Server connection status (connected, idle, failed, needs-auth)
+- Tool lists with direct/proxy toggle switches
+- Token cost estimates for direct tools
+- Inline reconnect buttons
+- OAuth authentication status and initiation
+- Real-time config changes (written to `mcp.json` on save)
+
+**Non-UI Mode (headless/CLI):**
+
+Displays server status in text format (equivalent to `/mcp status`).
+
+### `/mcp status`
+
+Displays the connection status of all configured servers.
+
+**Output:**
+
+```
+MCP Server Status:
+
+✓ chrome-devtools: connected (26 tools)
+✓ github: connected (21 tools, cached)
+○ postgres: not connected (12 tools, cached)
+✗ broken-server: failed 45s ago
+```
+
+**Status Indicators:**
+
+- `✓` - Connected and active
+- `○` - Not connected (metadata cached, available via lazy connect)
+- `✗` - Connection failed (includes time since failure)
+
+**Examples:**
+
+```bash
+/mcp status
+/mcp  # equivalent in non-UI mode
+```
+
+### `/mcp tools`
+
+Lists all available MCP tools from all servers.
+
+**Output:**
+
+```
+MCP Tools:
+
+  chrome_devtools_navigate
+  chrome_devtools_take_screenshot
+  chrome_devtools_get_console_logs
+  github_search_repositories
+  github_get_file_contents
+  ...
+
+Total: 47 tools
+```
+
+**Examples:**
+
+```bash
+/mcp tools
+```
+
+<Note>
+  This command shows tool names only, without descriptions or parameters. Use `mcp({ search: "..." })` for searchable results with details, or `mcp({ describe: "tool_name" })` for specific tool information.
+</Note>
+
+### `/mcp reconnect`
+
+Reconnects all configured MCP servers.
+
+**Behavior:**
+
+1. Closes existing connections
+2. Establishes fresh connections to all servers
+3. Fetches updated tool and resource metadata
+4. Updates the metadata cache
+5. Displays connection results
+
+**Output:**
+
+```
+MCP: Reconnected to chrome-devtools (26 tools, 3 resources)
+MCP: Reconnected to github (21 tools, 0 resources)
+MCP: Failed to reconnect to postgres: connection timeout
+```
+
+**Examples:**
+
+```bash
+/mcp reconnect
+```
+
+**Use Cases:**
+
+- Recover from connection failures
+- Refresh metadata after server updates
+- Clear connection state after configuration changes
+- Force re-authentication for OAuth servers
+
+### `/mcp reconnect <server>`
+
+Reconnects a single server by name.
+
+**Arguments:**
+
+<ParamField path="server" type="string" required>
+  The name of the server to reconnect (must match a key in `mcpServers` config).
+</ParamField>
+
+**Output:**
+
+```
+MCP: Reconnected to chrome-devtools (26 tools, 3 resources)
+```
+
+**Examples:**
+
+```bash
+/mcp reconnect chrome-devtools
+/mcp reconnect github
+```
+
+**Use Cases:**
+
+- Reconnect a specific failed server without affecting others
+- Force connection to a lazy server for testing
+- Refresh metadata for one server after updates
+
+**Error Handling:**
+
+If the server name doesn't exist:
+
+```
+Server "unknown-server" not found in config
+```
+
+## Interactive Panel
+
+The interactive panel (triggered by `/mcp` in UI mode) provides a rich TUI interface for managing MCP servers.
+
+### Features
+
+**Server Status:**
+- Real-time connection state (connected, idle, failed, needs-auth)
+- Last activity timestamps
+- Failure diagnostics
+
+**Tool Management:**
+- View all tools for each server
+- Toggle tools between direct and proxy modes
+- See token cost estimates for direct tool registration
+- Filter and search tools
+
+**Actions:**
+- Reconnect individual servers inline
+- Initiate OAuth flow for servers requiring authentication
+- Save configuration changes directly to `mcp.json`
+
+**Workflow:**
+
+1. Run `/mcp`
+2. Navigate with arrow keys
+3. Toggle direct tools with space/enter
+4. Press `r` to reconnect a server
+5. Press `s` to save changes
+6. Press `q` or `Esc` to quit
+
+<Warning>
+  Changes made in the interactive panel are written to your `mcp.json` file immediately on save. Restart Pi to apply direct tool configuration changes.
+</Warning>
+
+## Return Behavior
+
+All `/mcp` commands are **non-blocking**:
+- They execute synchronously
+- Display results via UI notifications
+- Do not return content to the conversation
+- Do not consume LLM context
+
+This makes them ideal for manual server management during development or debugging.
+
+## Comparison: `/mcp` vs `mcp({})`
+
+| Feature | `/mcp` command | `mcp()` tool |
+|---------|----------------|-------------|
+| **Purpose** | Manual management | Programmatic access for LLM |
+| **Output** | UI notifications | Returns text/data to conversation |
+| **Interactive** | Yes (panel UI) | No |
+| **Context usage** | None | Minimal (~200 tokens) |
+| **Typical use** | Developer/user | AI agent |
+
+**When to use `/mcp`:**
+- Checking server status during development
+- Reconnecting after configuration changes
+- Toggling direct tools interactively
+- Initiating OAuth authentication
+
+**When to use `mcp()`:**
+- Letting the AI agent discover and call tools
+- Automated workflows in Pi scripts
+- Programmatic server management
+
+## Related
+
+- [/mcp-auth Command](/api/mcp-auth) - OAuth authentication for MCP servers
+- [mcp() Tool](/api/mcp-tool) - Programmatic MCP tool access
+- [Server Options](/api/server-options) - Configure MCP servers
+- [Settings](/api/settings) - Global MCP settings

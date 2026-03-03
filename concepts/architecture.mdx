@@ -1,0 +1,257 @@
+---
+title: Architecture
+description: Understanding Pi MCP Adapter's proxy-based architecture and component design
+---
+
+## Overview
+
+Pi MCP Adapter uses a **proxy pattern** to give you access to hundreds of MCP tools through a single, compact interface. Instead of registering every tool in your context window, the adapter provides one gateway tool that dynamically routes calls to the appropriate MCP server.
+
+## Core Components
+
+The architecture consists of four main components working together:
+
+### 1. Single Proxy Tool
+
+The `mcp` tool is the only tool that appears in your context by default (unless you configure direct tools). It provides multiple modes of operation:
+
+```typescript
+mcp({ })                              // Show server status
+mcp({ server: "name" })               // List tools from server
+mcp({ search: "query" })              // Search for tools
+mcp({ describe: "tool_name" })        // Show tool details
+mcp({ connect: "server-name" })       // Connect and refresh metadata
+mcp({ tool: "name", args: '{...}' })  // Call a tool
+```
+
+<Info>
+The proxy tool consumes approximately **200 tokens** compared to 10k+ tokens for registering all tools individually.
+</Info>
+
+The tool's mode is determined by which parameters you provide, with priority: `tool` > `connect` > `describe` > `search` > `server` > status.
+
+### 2. Server Manager
+
+The `McpServerManager` class (`server-manager.ts`) handles all MCP server connections:
+
+- **Connection pooling** - Reuses healthy connections instead of creating duplicates
+- **Connection deduplication** - Prevents concurrent connection attempts to the same server
+- **Transport abstraction** - Supports stdio (local commands) and HTTP (remote servers)
+- **Transport fallback** - Tries StreamableHTTP first, falls back to SSE for legacy servers
+- **OAuth integration** - Injects bearer tokens for authenticated servers
+- **Idle tracking** - Tracks `lastUsedAt` timestamp and `inFlight` request count
+
+<Accordion title="How Connection Deduplication Works">
+When multiple tool calls request the same server simultaneously, the manager stores a single `Promise<ServerConnection>` in a `connectPromises` Map. All concurrent requests await the same promise instead of spawning multiple processes.
+
+```typescript
+if (this.connectPromises.has(name)) {
+  return this.connectPromises.get(name)!
+}
+
+const promise = this.createConnection(name, definition)
+this.connectPromises.set(name, promise)
+
+try {
+  const connection = await promise
+  this.connections.set(name, connection)
+  return connection
+} finally {
+  this.connectPromises.delete(name)
+}
+```
+</Accordion>
+
+### 3. Lifecycle Manager
+
+The `McpLifecycleManager` class (`lifecycle.ts`) handles three distinct lifecycle modes:
+
+- **Lazy mode** (default) - Don't connect at startup, connect on first use, disconnect when idle
+- **Eager mode** - Connect at startup but don't auto-reconnect
+- **Keep-alive mode** - Connect at startup, auto-reconnect via health checks, never disconnect
+
+The lifecycle manager runs health checks every 30 seconds:
+
+```typescript
+startHealthChecks(intervalMs = 30000): void {
+  this.healthCheckInterval = setInterval(() => {
+    this.checkConnections()
+  }, intervalMs)
+  this.healthCheckInterval.unref()  // Don't block process exit
+}
+```
+
+<Note>
+The health check interval uses `unref()` so it won't prevent Pi from shutting down gracefully.
+</Note>
+
+For keep-alive servers, the manager attempts automatic reconnection if the connection drops:
+
+```typescript
+if (!connection || connection.status !== "connected") {
+  try {
+    await this.manager.connect(name, definition)
+    console.log(`MCP: Reconnected to ${name}`)
+    this.onReconnect?.(name)  // Update tool metadata
+  } catch (error) {
+    console.error(`MCP: Failed to reconnect to ${name}:`, error)
+  }
+}
+```
+
+For lazy/eager servers, the manager checks if they're idle and closes them:
+
+```typescript
+for (const [name] of this.allServers) {
+  if (this.keepAliveServers.has(name)) continue
+  const timeout = this.getIdleTimeout(name)
+  if (timeout > 0 && this.manager.isIdle(name, timeout)) {
+    await this.manager.close(name)
+    this.onIdleShutdown?.(name)
+  }
+}
+```
+
+### 4. Metadata Cache
+
+The `metadata-cache.ts` module persists tool and resource metadata to disk at `~/.pi/agent/mcp-cache.json`:
+
+```typescript
+interface ServerCacheEntry {
+  configHash: string      // SHA-256 of server config
+  tools: CachedTool[]     // Tool names, descriptions, schemas
+  resources: CachedResource[]  // Resource URIs and descriptions
+  cachedAt: number        // Timestamp for cache expiration
+}
+```
+
+**Cache validation** ensures metadata matches the current config:
+
+```typescript
+export function computeServerHash(definition: ServerEntry): string {
+  const identity: Record<string, unknown> = {
+    command: definition.command,
+    args: definition.args,
+    env: definition.env,
+    cwd: definition.cwd,
+    url: definition.url,
+    headers: definition.headers,
+    auth: definition.auth,
+    bearerToken: definition.bearerToken,
+    bearerTokenEnv: definition.bearerTokenEnv,
+    exposeResources: definition.exposeResources,
+  }
+  const normalized = stableStringify(identity)
+  return createHash("sha256").update(normalized).digest("hex")
+}
+```
+
+<Tip>
+Lifecycle settings (`lifecycle`, `idleTimeout`, `debug`) are intentionally excluded from the hash because they don't affect which tools a server exposes.
+</Tip>
+
+The cache enables:
+- **Fast startup** - No need to connect all servers at launch
+- **Offline search** - Search and describe tools without active connections
+- **Direct tool registration** - Register individual tools from cache at startup
+
+Cache entries expire after 7 days by default:
+
+```typescript
+const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
+```
+
+## Component Interaction Flow
+
+<Steps>
+  <Step title="Initialization">
+    1. Load config from `~/.pi/agent/mcp.json`
+    2. Load metadata cache from `~/.pi/agent/mcp-cache.json`
+    3. Register servers with lifecycle manager
+    4. Hydrate tool metadata from cache (if valid)
+    5. Connect eager/keep-alive servers in parallel (max 10 concurrent)
+    6. Start lifecycle health checks
+  </Step>
+  
+  <Step title="Tool Call">
+    1. LLM calls `mcp({ tool: "name", args: '{...}' })`
+    2. Adapter finds tool in cached metadata
+    3. Check if server is connected via server manager
+    4. If not connected, lazy connect (if not in backoff)
+    5. Server manager increments `inFlight` counter
+    6. Call MCP server via `client.callTool()`
+    7. Transform MCP content to Pi format
+    8. Server manager decrements `inFlight`, updates `lastUsedAt`
+  </Step>
+  
+  <Step title="Idle Shutdown">
+    1. Health check runs every 30 seconds
+    2. For non-keep-alive servers, check if idle
+    3. Compare `Date.now() - lastUsedAt` against timeout
+    4. Verify `inFlight === 0` (no active requests)
+    5. Close connection via server manager
+    6. Invoke `onIdleShutdown` callback
+  </Step>
+  
+  <Step title="Reconnection">
+    1. Health check detects keep-alive server disconnected
+    2. Server manager attempts connection
+    3. Fetch fresh tools and resources from server
+    4. Update in-memory tool metadata
+    5. Write updated cache entry to disk
+    6. Invoke `onReconnect` callback
+  </Step>
+</Steps>
+
+## npx Binary Resolution
+
+For servers using `"command": "npx"`, the adapter resolves the actual binary path to avoid spawning the ~143 MB npm parent process:
+
+```typescript
+if (command === "npx" || command === "npm") {
+  const resolved = await resolveNpxBinary(command, args)
+  if (resolved) {
+    command = resolved.isJs ? "node" : resolved.binPath
+    args = resolved.isJs ? [resolved.binPath, ...resolved.extraArgs] : resolved.extraArgs
+    console.log(`MCP: ${name} resolved to ${resolved.binPath} (skipping npm parent)`)
+  }
+}
+```
+
+This optimization significantly reduces memory usage when running multiple MCP servers.
+
+## Direct Tools vs Proxy
+
+While the proxy pattern is the default, you can configure specific tools to register as first-class Pi tools:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "directTools": ["search_repositories", "get_file_contents"]
+    }
+  }
+}
+```
+
+Direct tools are registered from the cache at startup, so no server connection is required:
+
+```typescript
+for (const spec of directSpecs) {
+  pi.registerTool({
+    name: spec.prefixedName,
+    label: `MCP: ${spec.originalName}`,
+    description: spec.description || "(no description)",
+    parameters: Type.Unsafe<Record<string, unknown>>(
+      spec.inputSchema || { type: "object", properties: {} }
+    ),
+    async execute(_toolCallId, params) {
+      // Lazy connect if needed, then call tool
+    },
+  })
+}
+```
+
+Each direct tool costs ~150-300 tokens. Good for targeted sets of 5-20 tools. For servers with 75+ tools, stick with the proxy.

@@ -1,0 +1,309 @@
+---
+title: "Server Options"
+description: "Complete reference for ServerEntry configuration fields"
+---
+
+## Overview
+
+Each MCP server is configured as an entry in the `mcpServers` object in your `mcp.json` file. The `ServerEntry` interface defines all available configuration options.
+
+## Configuration Structure
+
+```json
+{
+  "mcpServers": {
+    "server-name": {
+      // ServerEntry fields here
+    }
+  }
+}
+```
+
+## Transport Configuration
+
+MCP servers can use either **stdio** (local process) or **HTTP** transport.
+
+### Stdio Transport
+
+For local servers that communicate via stdin/stdout:
+
+<ParamField path="command" type="string">
+  The executable to run (e.g., `"npx"`, `"node"`, `"python"`, or an absolute path).
+</ParamField>
+
+<ParamField path="args" type="string[]">
+  Command-line arguments for the server process.
+  
+  **Example:**
+  ```json
+  "args": ["-y", "chrome-devtools-mcp@latest"]
+  ```
+</ParamField>
+
+<ParamField path="env" type="Record<string, string>">
+  Environment variables for the server process. Supports `${VAR}` interpolation from the parent process environment.
+  
+  **Example:**
+  ```json
+  "env": {
+    "API_KEY": "${MY_API_KEY}",
+    "DEBUG": "true"
+  }
+  ```
+</ParamField>
+
+<ParamField path="cwd" type="string">
+  Working directory for the server process. Defaults to the current directory.
+</ParamField>
+
+### HTTP Transport
+
+For remote servers accessed via HTTP:
+
+<ParamField path="url" type="string">
+  The HTTP endpoint URL. The adapter attempts StreamableHTTP transport first, then falls back to SSE if the server doesn't support it.
+  
+  **Example:**
+  ```json
+  "url": "https://mcp.example.com"
+  ```
+</ParamField>
+
+<ParamField path="headers" type="Record<string, string>">
+  Custom HTTP headers to send with requests.
+  
+  **Example:**
+  ```json
+  "headers": {
+    "X-API-Version": "2024-01-01",
+    "User-Agent": "Pi MCP Adapter"
+  }
+  ```
+</ParamField>
+
+## Authentication
+
+<ParamField path="auth" type="'oauth' | 'bearer'">
+  Authentication method for HTTP servers.
+  
+  - `"oauth"` - Uses OAuth tokens from `~/.pi/agent/mcp-tokens/<server-name>.json`
+  - `"bearer"` - Uses static bearer tokens from `bearerToken` or `bearerTokenEnv`
+</ParamField>
+
+<ParamField path="bearerToken" type="string">
+  Static bearer token for authentication. Not recommended for production (use `bearerTokenEnv` instead).
+  
+  **Example:**
+  ```json
+  "bearerToken": "your-secret-token"
+  ```
+</ParamField>
+
+<ParamField path="bearerTokenEnv" type="string">
+  Name of an environment variable containing the bearer token. More secure than `bearerToken`.
+  
+  **Example:**
+  ```json
+  "bearerTokenEnv": "API_SERVER_TOKEN"
+  ```
+  
+  The adapter reads `process.env.API_SERVER_TOKEN` at runtime.
+</ParamField>
+
+## Lifecycle Management
+
+<ParamField path="lifecycle" type="'lazy' | 'eager' | 'keep-alive'" default="lazy">
+  Controls when the server connects and how it handles disconnections.
+  
+  - **`lazy`** (default) - Don't connect at startup. Connect on first tool call. Disconnect after idle timeout.
+  - **`eager`** - Connect at startup but don't auto-reconnect if the connection drops. No idle timeout by default.
+  - **`keep-alive`** - Connect at startup. Auto-reconnect via health checks. No idle timeout.
+</ParamField>
+
+<ParamField path="idleTimeout" type="number">
+  Minutes of inactivity before disconnecting the server. Overrides the global `settings.idleTimeout`.
+  
+  - Set to `0` to disable idle timeout for this server
+  - Only applies to `lazy` and `eager` modes (keep-alive servers never idle out)
+  
+  **Example:**
+  ```json
+  "idleTimeout": 5  // Disconnect after 5 minutes of inactivity
+  ```
+</ParamField>
+
+## Resource Handling
+
+<ParamField path="exposeResources" type="boolean" default="true">
+  Whether to expose MCP resources as callable tools.
+  
+  When `true`, each resource becomes a tool named `get_<resource_name>` that reads the resource content.
+  
+  **Example:**
+  ```json
+  "exposeResources": false  // Don't create tools for resources
+  ```
+</ParamField>
+
+## Direct Tool Registration
+
+<ParamField path="directTools" type="boolean | string[]" default="false">
+  Controls whether tools from this server are registered as individual Pi tools instead of being accessed through the `mcp()` proxy.
+  
+  - `true` - Register all tools from this server as direct Pi tools
+  - `["tool_a", "tool_b"]` - Register only the specified tools (use original MCP names, not prefixed names)
+  - `false` or omitted - Proxy only (default)
+  
+  Direct tools appear in the agent's tool list alongside builtins like `read` and `bash`. This costs ~150-300 tokens per tool but eliminates the need for search calls.
+  
+  **Examples:**
+  ```json
+  // Register all tools
+  "directTools": true
+  
+  // Register specific tools only
+  "directTools": ["take_screenshot", "navigate"]
+  
+  // Proxy only (default)
+  "directTools": false
+  ```
+</ParamField>
+
+<Note>
+  Direct tools register from the metadata cache at startup. On the first session after configuring `directTools`, the cache may not exist yet. Run `/mcp reconnect <server>` and restart Pi to populate the cache.
+</Note>
+
+## Debugging
+
+<ParamField path="debug" type="boolean" default="false">
+  Show server stderr output in the terminal. Useful for troubleshooting server startup or runtime issues.
+  
+  By default, server stderr is suppressed to keep the terminal clean.
+  
+  **Example:**
+  ```json
+  "debug": true  // Show stderr from this server
+  ```
+</ParamField>
+
+## Complete Examples
+
+### Stdio Server (npx)
+
+```json
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"],
+      "lifecycle": "lazy",
+      "idleTimeout": 10
+    }
+  }
+}
+```
+
+### Stdio Server (local script)
+
+```json
+{
+  "mcpServers": {
+    "my-tool": {
+      "command": "node",
+      "args": ["/path/to/server.js"],
+      "env": {
+        "NODE_ENV": "production",
+        "API_KEY": "${MY_API_KEY}"
+      },
+      "cwd": "/path/to/project"
+    }
+  }
+}
+```
+
+### HTTP Server with Bearer Token
+
+```json
+{
+  "mcpServers": {
+    "api-server": {
+      "url": "https://api.example.com",
+      "auth": "bearer",
+      "bearerTokenEnv": "API_SERVER_TOKEN",
+      "headers": {
+        "X-API-Version": "2024-01-01"
+      }
+    }
+  }
+}
+```
+
+### HTTP Server with OAuth
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "url": "https://mcp.github.com",
+      "auth": "oauth"
+    }
+  }
+}
+```
+
+Tokens are read from `~/.pi/agent/mcp-tokens/github.json`.
+
+### Keep-Alive Server
+
+```json
+{
+  "mcpServers": {
+    "database": {
+      "command": "npx",
+      "args": ["-y", "postgres-mcp"],
+      "lifecycle": "keep-alive",
+      "env": {
+        "DATABASE_URL": "${DATABASE_URL}"
+      }
+    }
+  }
+}
+```
+
+### Server with Direct Tools
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "directTools": ["search_repositories", "get_file_contents"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+### Debug Mode
+
+```json
+{
+  "mcpServers": {
+    "broken-server": {
+      "command": "node",
+      "args": ["server.js"],
+      "debug": true
+    }
+  }
+}
+```
+
+## Related
+
+- [Settings](/api/settings) - Global MCP configuration
+- [/mcp Command](/api/mcp-command) - Manage servers
+- [/mcp-auth Command](/api/mcp-auth) - OAuth authentication
+- [Types Reference](/api/types) - TypeScript interfaces

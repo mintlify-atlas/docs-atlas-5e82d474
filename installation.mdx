@@ -1,0 +1,251 @@
+---
+title: Installation
+description: Install Pi MCP Adapter and get started in under a minute
+---
+
+## Prerequisites
+
+Before installing Pi MCP Adapter, ensure you have:
+
+- [Pi coding agent](https://github.com/badlogic/pi-mono/) installed and running
+- Node.js 16+ (for npm-based MCP servers)
+- Basic familiarity with JSON configuration files
+
+<Note>
+  Pi MCP Adapter is a Pi extension and requires Pi to be installed first. Visit the [Pi repository](https://github.com/badlogic/pi-mono/) for installation instructions.
+</Note>
+
+## Install via Pi Package Manager
+
+The easiest way to install Pi MCP Adapter is through Pi's built-in package manager:
+
+```bash
+pi install npm:pi-mcp-adapter
+```
+
+This command will:
+
+1. Download the latest version from npm
+2. Install it to `~/.pi/agent/extensions/pi-mcp-adapter/`
+3. Add the extension to your `~/.pi/agent/settings.json`
+4. Install required dependencies
+
+<Warning>
+  **Restart Required**: After installation, you must restart Pi for the extension to load.
+</Warning>
+
+## Restart Pi
+
+After installation completes, restart Pi:
+
+```bash
+# Exit your current Pi session
+exit
+
+# Start Pi again
+pi
+```
+
+The MCP adapter will now be active in your Pi session.
+
+## Manual Installation
+
+If you prefer to install manually or need to install from source:
+
+<Steps>
+  <Step title="Create the extension directory">
+    ```bash
+    mkdir -p ~/.pi/agent/extensions/pi-mcp-adapter
+    cd ~/.pi/agent/extensions/pi-mcp-adapter
+    ```
+  </Step>
+  
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/nicobailon/pi-mcp-adapter.git .
+    ```
+  </Step>
+  
+  <Step title="Install dependencies">
+    ```bash
+    npm install --omit=dev
+    ```
+  </Step>
+  
+  <Step title="Update Pi settings">
+    Add the extension path to `~/.pi/agent/settings.json`:
+    
+    ```json settings.json
+    {
+      "extensions": [
+        "~/.pi/agent/extensions/pi-mcp-adapter/index.ts"
+      ]
+    }
+    ```
+    
+    <Tip>
+      If you already have other extensions configured, add the path to the existing `extensions` array.
+    </Tip>
+  </Step>
+  
+  <Step title="Restart Pi">
+    Exit and restart Pi to load the extension.
+  </Step>
+</Steps>
+
+## Verify Installation
+
+To verify that Pi MCP Adapter is installed correctly:
+
+<Steps>
+  <Step title="Check for the mcp tool">
+    After restarting Pi, the `mcp` tool should be available. You can verify by running:
+    
+    ```bash
+    mcp({})
+    ```
+    
+    If no servers are configured yet, you'll see:
+    
+    ```
+    MCP: 0/0 servers, 0 tools
+    ```
+  </Step>
+  
+  <Step title="Check for the /mcp command">
+    The `/mcp` command should also be available:
+    
+    ```bash
+    /mcp
+    ```
+    
+    This will show the server status (or indicate no servers are configured).
+  </Step>
+</Steps>
+
+<Info>
+  **No servers configured?** That's expected! Continue to the [Quick Start guide](/quickstart) to configure your first MCP server.
+</Info>
+
+## Package Contents
+
+The Pi MCP Adapter installation includes:
+
+| File | Purpose |
+|------|--------|
+| `index.ts` | Main extension entry point |
+| `types.ts` | TypeScript type definitions |
+| `config.ts` | Configuration loading and parsing |
+| `server-manager.ts` | MCP server connection management |
+| `tool-registrar.ts` | Tool registration and transformation |
+| `lifecycle.ts` | Server lifecycle and idle timeout management |
+| `metadata-cache.ts` | Tool metadata caching for offline access |
+| `oauth-handler.ts` | OAuth authentication flow |
+| `mcp-panel.ts` | Interactive management panel |
+
+## Dependencies
+
+Pi MCP Adapter automatically installs these dependencies:
+
+- `@modelcontextprotocol/sdk` - Official MCP SDK for client connections
+- `@sinclair/typebox` - Type validation for tool schemas
+- `zod` (peer dependency) - Schema validation used by Pi
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Extension not loading after restart">
+    1. Check that the path in `settings.json` is correct:
+       ```bash
+       cat ~/.pi/agent/settings.json
+       ```
+    2. Verify the extension files exist:
+       ```bash
+       ls -la ~/.pi/agent/extensions/pi-mcp-adapter/
+       ```
+    3. Check for errors in Pi's startup output
+  </Accordion>
+  
+  <Accordion title="npm install failed during installation">
+    If npm install fails:
+    1. Navigate to the extension directory:
+       ```bash
+       cd ~/.pi/agent/extensions/pi-mcp-adapter
+       ```
+    2. Manually run npm install:
+       ```bash
+       npm install --omit=dev
+       ```
+    3. Restart Pi
+  </Accordion>
+  
+  <Accordion title="'pi install' command not found">
+    Make sure you have the latest version of Pi that supports the package manager. Update Pi:
+    ```bash
+    # Follow Pi's update instructions
+    ```
+    
+    If `pi install` is not available, use the manual installation method instead.
+  </Accordion>
+</AccordionGroup>
+
+## Updating
+
+To update Pi MCP Adapter to the latest version:
+
+```bash
+pi install npm:pi-mcp-adapter
+```
+
+Then restart Pi. The installer will overwrite existing files with the latest version.
+
+<Tip>
+  Your MCP server configurations in `~/.pi/agent/mcp.json` are preserved during updates.
+</Tip>
+
+## Uninstalling
+
+To remove Pi MCP Adapter:
+
+<Steps>
+  <Step title="Remove the extension directory">
+    ```bash
+    rm -rf ~/.pi/agent/extensions/pi-mcp-adapter
+    ```
+  </Step>
+  
+  <Step title="Update settings.json">
+    Remove the extension path from `~/.pi/agent/settings.json`:
+    
+    ```json settings.json
+    {
+      "extensions": [
+        // Remove this line:
+        // "~/.pi/agent/extensions/pi-mcp-adapter/index.ts"
+      ]
+    }
+    ```
+  </Step>
+  
+  <Step title="Optional: Remove configuration">
+    If you want to remove all MCP server configurations:
+    
+    ```bash
+    rm ~/.pi/agent/mcp.json
+    rm ~/.pi/agent/mcp-cache.json
+    ```
+  </Step>
+  
+  <Step title="Restart Pi">
+    Exit and restart Pi to complete the uninstallation.
+  </Step>
+</Steps>
+
+## Next Steps
+
+Now that Pi MCP Adapter is installed, continue to the [Quick Start guide](/quickstart) to:
+
+- Configure your first MCP server
+- Search and discover available tools
+- Make your first tool call through the proxy
+- Explore advanced configuration options

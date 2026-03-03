@@ -1,0 +1,315 @@
+---
+title: "Project-Specific Configuration"
+description: "Use .pi/mcp.json to configure MCP servers for individual projects"
+---
+
+## Overview
+
+While `~/.pi/agent/mcp.json` provides global MCP configuration, you can override or extend it on a per-project basis using `.pi/mcp.json` in your project root. This is useful for:
+
+- Adding project-specific MCP servers (e.g., a database server only needed for one codebase)
+- Overriding global server configurations
+- Setting different lifecycle modes or direct tools for specific projects
+- Keeping sensitive project configurations out of your global config
+
+## Configuration Precedence
+
+The adapter loads configurations in this order, with later sources overriding earlier ones:
+
+1. **Global config** (`~/.pi/agent/mcp.json`)
+2. **Imported configs** (if `imports` is specified in global config)
+3. **Project config** (`.pi/mcp.json` in current working directory)
+
+Project config takes highest precedence — any server defined in `.pi/mcp.json` will override the same server from global or imported configs.
+
+<Tip>
+From `config.ts:64-78`, the adapter checks for `.pi/mcp.json` relative to `process.cwd()` and merges it with global configuration. Settings are also merged, so you can override specific settings without redefining everything.
+</Tip>
+
+## Example: Project Database Server
+
+Suppose you're working on a project that needs access to a PostgreSQL database via MCP:
+
+```json .pi/mcp.json
+{
+  "mcpServers": {
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "env": {
+        "POSTGRES_CONNECTION_STRING": "postgresql://localhost:5432/mydb"
+      },
+      "lifecycle": "lazy",
+      "directTools": ["query", "list_tables"]
+    }
+  }
+}
+```
+
+Now when you run Pi from this project directory:
+- The `postgres` server is available
+- It won't interfere with other projects
+- Connection credentials stay in the project (add `.pi/` to `.gitignore`)
+
+## Overriding Global Servers
+
+You can override settings for globally-defined servers. For example, if you have `github` configured globally but want different settings in one project:
+
+```json .pi/mcp.json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${PROJECT_GITHUB_TOKEN}"
+      },
+      "lifecycle": "keep-alive",
+      "directTools": true
+    }
+  }
+}
+```
+
+This replaces the global `github` configuration entirely when working in this project.
+
+## Settings Override
+
+<CodeGroup>
+```json Global (~/.pi/agent/mcp.json)
+{
+  "settings": {
+    "toolPrefix": "server",
+    "idleTimeout": 10
+  },
+  "mcpServers": { }
+}
+```
+
+```json Project (.pi/mcp.json)
+{
+  "settings": {
+    "toolPrefix": "short",
+    "directTools": true
+  },
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+      "lifecycle": "lazy"
+    }
+  }
+}
+```
+</CodeGroup>
+
+In this project:
+- Tool prefix becomes `short` (strips `-mcp` suffix)
+- All servers get `directTools: true` by default
+- `idleTimeout: 10` from global config is preserved (not overridden)
+
+<Warning>
+Settings from project config are **merged** with global settings. Only the keys you specify are overridden — other settings remain from the global config.
+</Warning>
+
+## Import Behavior with Project Config
+
+Imports are processed from the global config only. Project configs cannot specify `imports`. The load order is:
+
+1. Load global config from `~/.pi/agent/mcp.json`
+2. Process `imports` array from global config
+3. Load project config from `.pi/mcp.json`
+4. Merge: project config overrides imported and global servers
+
+<Accordion title="Why can't project configs use imports?">
+Imports are resolved relative to fixed paths (e.g., `~/.cursor/mcp.json`). Since these are user-level configs, it doesn't make sense to re-import them per-project. If you need to reference another project's config, copy the server definitions explicitly.
+</Accordion>
+
+## File Location
+
+The adapter looks for `.pi/mcp.json` in the **current working directory** (`process.cwd()`). This is typically:
+
+- The directory where you ran `pi`
+- The workspace root in most editor integrations
+
+If you run Pi from a subdirectory, it will look for `.pi/mcp.json` in that subdirectory, not the project root.
+
+<Tip>
+To verify which config is loaded, check the logs at startup or use `/mcp` to see the interactive panel. The panel doesn't show provenance (user vs project) yet, but you can check which servers are defined.
+</Tip>
+
+## Security Considerations
+
+### Secrets in Project Config
+
+Project configs often contain sensitive data:
+
+```json
+{
+  "mcpServers": {
+    "database": {
+      "env": {
+        "DB_PASSWORD": "${DATABASE_PASSWORD}"
+      }
+    }
+  }
+}
+```
+
+<Warning>
+**Do not commit `.pi/mcp.json` to version control if it contains secrets.** Add `.pi/` to your `.gitignore`.
+</Warning>
+
+### Environment Variable Interpolation
+
+Use `${VAR}` syntax for secrets. Set the environment variable before running Pi:
+
+```bash
+export DATABASE_PASSWORD="secretvalue"
+pi
+```
+
+The adapter will interpolate `${DATABASE_PASSWORD}` from the environment.
+
+### Shared Project Configs
+
+If you want to commit a shared config for your team:
+
+1. Create `.pi/mcp.json.example` with placeholder values:
+   ```json
+   {
+     "mcpServers": {
+       "database": {
+         "env": {
+           "DB_PASSWORD": "${DATABASE_PASSWORD}"
+         }
+       }
+     }
+   }
+   ```
+
+2. Add `.pi/mcp.json` to `.gitignore`
+3. Document required environment variables in your README
+
+## Real-World Example
+
+Here's a complete project config for a web app:
+
+```json .pi/mcp.json
+{
+  "settings": {
+    "toolPrefix": "short"
+  },
+  "mcpServers": {
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "env": {
+        "POSTGRES_CONNECTION_STRING": "${DATABASE_URL}"
+      },
+      "lifecycle": "lazy",
+      "directTools": ["query", "list_tables", "describe_table"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "./src",
+        "./public"
+      ],
+      "lifecycle": "lazy",
+      "exposeResources": true
+    },
+    "puppeteer": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
+      "lifecycle": "lazy",
+      "directTools": ["puppeteer_navigate", "puppeteer_screenshot"]
+    }
+  }
+}
+```
+
+This configuration:
+- Uses `short` prefix mode for cleaner tool names
+- Adds a project database with lazy connection
+- Restricts filesystem server to `./src` and `./public`
+- Promotes specific Puppeteer tools to direct access
+- All servers use lazy lifecycle to minimize startup overhead
+
+## Troubleshooting
+
+### Project Config Not Loading
+
+1. **Check working directory**: Run `pwd` before starting Pi. The adapter looks for `.pi/mcp.json` relative to this path.
+
+2. **Verify JSON syntax**: Invalid JSON will fail silently. Test with:
+   ```bash
+   cat .pi/mcp.json | jq
+   ```
+
+3. **Check console warnings**: The adapter logs to stderr if it can't parse the project config:
+   ```
+   Failed to load project MCP config: <error>
+   ```
+
+### Server Not Overriding Global Config
+
+Make sure server names match exactly. Server names are case-sensitive:
+
+```json
+// Global config
+{
+  "mcpServers": {
+    "github": { }
+  }
+}
+
+// Project config - wrong (won't override)
+{
+  "mcpServers": {
+    "GitHub": { }  // ❌ Different name
+  }
+}
+
+// Project config - correct
+{
+  "mcpServers": {
+    "github": { }  // ✅ Same name, overrides
+  }
+}
+```
+
+### Settings Not Merging
+
+Settings merge is shallow. If you want to preserve global settings:
+
+```json Global
+{
+  "settings": {
+    "toolPrefix": "server",
+    "idleTimeout": 5
+  }
+}
+```
+
+```json Project
+{
+  "settings": {
+    "toolPrefix": "short"
+    // idleTimeout remains 5 from global
+  }
+}
+```
+
+But nested objects don't deep-merge:
+
+```json
+// This won't work as expected
+{
+  "settings": {
+    "directTools": true  // Overrides entire directTools, doesn't merge
+  }
+}
+```
